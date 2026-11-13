@@ -1,0 +1,35 @@
+# Configuracao da parte 1 (PDI). Todos os campos tem valor padrao em celegans_seg/config.py;
+# edite aqui so o que quiser mudar. Citacoes [Aula NN, pag. P] = pagina do PDF em Estudos/PDI/Slides.
+
+input:
+  # --- Opcao A: pasta com os quadros de UMA sequencia ---------------------------------
+  images: ""          # ex.: D:/zenodo/csb-1_dataset/images/24_2_1_1
+  masks: ""           # opcional: D:/zenodo/csb-1_dataset/masks/24_2_1_1
+  # --- Opcao B: raiz do dataset (images/<seq>, masks/<seq>) ---------------------------
+  dataset_root: ""
+  sequence: ""
+  pattern: "*.png"
+  mask_pattern: "{stem}_*.png"   # mascaras do quadro 12.png -> 12_0.png, 12_1.png, ...
+  start: 0
+  end: -1
+  step: 1
+  worms_dark: true               # campo claro (verme escuro). false para fluorescencia
+  nodata_border: false           # true p/ recortes com moldura preta (Zenodo 15526615 / Annotated images)
+
+normalize:   {gamma: 1.0, autocontrast: false}
+denoise:     {method: gaussian, sigma: 1.0}       # gaussian | median | bilateral | none
+background:  {method: median, n_samples: 25}      # median | tophat | none
+threshold:   {method: otsu, gain: 4.0, min_threshold: 40}   # otsu | adaptive
+morphology:  {opening_radius: 1, closing_radius: 1, fill_holes: true}
+labeling:    {min_area: 150}                      # 80 no sintetico; 150 funcionou melhor no CSB-1 (912x736)
+analysis:    {cluster_ratio: 1.5, ref_area: 0.0}  # ref_area 0 = estimada dos dados
+split:       {enabled: true, marker_min_dist: 10}
+tracking:    {max_dist: 40.0, max_missed: 5, min_hits: 3}
+export:      {patch_size: 128, only_clusters: true}
+
+output:
+  dir: runs/last
+
+# Ordem dos estagios. Remova "export"/"evaluate"/"visualize" para rodar mais leve.
+stages: [normalize, denoise, background, threshold, morphology, labeling,
+         analysis, split, refine, tracking, evaluate, export, visualize]
