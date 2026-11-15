@@ -42,8 +42,7 @@ def main():
     pipe.fit(cfg.background.n_samples)
     for ctx in pipe.run():
         n_cl = ctx.metrics.get("n_clusters", 0)
-        print(f"\rquadro {ctx.index + 1}/{n}  vermes={len(ctx.instances)}  amontoados={n_cl}  "
-              f"trilhas={ctx.metrics.get('n_tracks_active', 0)}", end="", file=sys.stderr)
+        print(f"\rquadro {ctx.index + 1}/{n}  vermes={len(ctx.instances)}  amontoados={n_cl}", end="", file=sys.stderr)
     print(f"\nconcluido em {time.time() - t0:.1f}s -> {cfg.output.dir}")
 
 

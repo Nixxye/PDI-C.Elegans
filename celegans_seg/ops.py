@@ -96,6 +96,34 @@ def black_tophat(img: np.ndarray, size: int = 31) -> np.ndarray:
 # --------------------------------------------------------------------------------------
 
 
+def gray_closing(img: np.ndarray, radius: int) -> np.ndarray:
+    """Fechamento em tons de cinza (dilatacao + erosao) com disco: preenche vales escuros mais
+    estreitos que o elemento estruturante. Em `signal` (verme claro) fecha cortes dentro do verme.
+    [Aula 08, pag. 26-27 para o caso binario; a extensao a tons de cinza e a mesma ideia do top-hat, pag. 62-71]"""
+    return img if radius <= 0 else ndi.grey_closing(img, footprint=disk(radius))
+
+
+def line_footprint(length: int, angle_deg: float) -> np.ndarray:
+    fp = np.zeros((length, length), bool)
+    c = (length - 1) / 2
+    t = np.deg2rad(angle_deg)
+    for s in np.linspace(-c, c, 4 * length):
+        fp[int(round(c - s * np.sin(t))), int(round(c + s * np.cos(t)))] = True
+    return fp
+
+
+def oriented_closing(img: np.ndarray, length: int, n_angles: int = 8) -> np.ndarray:
+    """Fechamento em tons de cinza com segmentos de reta em varias orientacoes; fica com o maior
+    resultado. Liga trechos do MESMO verme ao longo do corpo sem engordar tanto na transversal
+    quanto o disco (que une vermes vizinhos)."""
+    if length <= 1:
+        return img
+    out = img
+    for a in np.arange(n_angles) * (180.0 / n_angles):
+        out = np.maximum(out, ndi.grey_closing(img, footprint=line_footprint(length, a)))
+    return out
+
+
 def disk(radius: int) -> np.ndarray:
     """Elemento estruturante em forma de disco."""
     y, x = np.ogrid[-radius : radius + 1, -radius : radius + 1]
@@ -176,6 +204,42 @@ def valid_region(raw: np.ndarray) -> np.ndarray:
         return np.ones(raw.shape, bool)
     edge = np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))
     return ~np.isin(lab, edge[edge > 0])
+
+
+def bridge_components(lab: np.ndarray, n: int, gap: int, min_area: int) -> np.ndarray:
+    """Liga com um traco reto os pares de componentes GRANDES separados por no maximo `gap` px.
+
+    Um verme com o meio claro (ou parado) sai em dois pedacos; cada pedaco e grande (>= min_area),
+    ao contrario da sujeira do agar, que e pequena. Ligar so componentes grandes evita unir
+    ruido (o que o fechamento em tons de cinza faz). Dois vermes distintos proximos tambem sao
+    ligados, mas isso e aceitavel: viram um amontoado, que vai para a CNN.
+    Nao esta nos slides (usa a transformada de distancia, Aula 01c, pag. 11).
+    """
+    if n < 2 or gap <= 0:
+        return lab > 0
+    out = lab > 0
+    areas = np.bincount(lab.ravel(), minlength=n + 1)
+    big = [i for i in range(1, n + 1) if areas[i] >= min_area]
+    slices = ndi.find_objects(lab)
+    H, W = lab.shape
+    for i in big:
+        r0, c0, r1, c1 = slices[i - 1][0].start, slices[i - 1][1].start, slices[i - 1][0].stop, slices[i - 1][1].stop
+        r0, c0, r1, c1 = max(r0 - gap, 0), max(c0 - gap, 0), min(r1 + gap, H), min(c1 + gap, W)
+        win = lab[r0:r1, c0:c1]
+        dt, inds = ndi.distance_transform_edt(win != i, return_indices=True)
+        for j in big:
+            if j <= i:
+                continue
+            q = (win == j)
+            if not q.any():
+                continue
+            d = np.where(q, dt, np.inf)
+            k = np.unravel_index(np.argmin(d), d.shape)
+            if d[k] <= gap:
+                py, px = inds[0][k], inds[1][k]
+                for t in np.linspace(0, 1, int(d[k]) * 2 + 2):  # traco reto entre os dois pontos mais proximos
+                    out[r0 + int(round(py + t * (k[0] - py))), c0 + int(round(px + t * (k[1] - px)))] = True
+    return ndi.binary_dilation(out & ~(lab > 0), structure=np.ones((3, 3))) | out if (out != (lab > 0)).any() else out
 
 
 def remove_small(lab: np.ndarray, n: int, min_area: int) -> tuple[np.ndarray, int]:

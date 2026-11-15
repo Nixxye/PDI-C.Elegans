@@ -56,6 +56,9 @@ class DenoiseCfg:
 class BackgroundCfg:
     method: str = "median"  # median (fundo por mediana temporal) | tophat | none
     n_samples: int = 25
+    percentile: float = 50.0  # 50 = mediana. Maior (ex.: 80) = fundo mais claro: nao absorve verme que fica parado
+    close_kind: str = "none"  # preenche 'cortes' escuros dentro do verme no sinal: none | disk | lines | gauss
+    close_size: int = 5  # disk: raio | lines: comprimento da linha (px) | gauss: sigma
     tophat_size: int = 31  # [Aula 08, pag. 62-71]; deve ser maior que a largura do verme
 
 
@@ -66,6 +69,10 @@ class ThresholdCfg:
     min_threshold: int = 40  # piso (0-255) para quadros sem vermes
     adaptive_window: int = 51  # [Aula 08, pag. 14]
     adaptive_offset: int = 20  # (0-255) acima da media local
+    grow_dist: int = 0  # 0 = desligado. Completa o verme com o sinal espacial (top-hat) ate N px das sementes
+    grow_seed_area: int = 150  # so componentes com pelo menos esta area servem de semente
+    grow_open: int = 0  # raio da abertura do trecho acrescentado: tira espinhos finos (textura do agar junto do verme)
+    grow_thr: float = 1.0  # limiar do sinal espacial = grow_thr x limiar do sinal temporal
 
 
 @dataclass
@@ -78,6 +85,8 @@ class MorphCfg:
 @dataclass
 class LabelCfg:
     min_area: int = 80  # componentes menores sao ruido
+    bridge_gap: int = 0  # 0 = desligado. Liga componentes grandes separados por ate N px (verme partido em dois)
+    bridge_min_area: int = 150  # so liga pedacos com pelo menos esta area (evita unir sujeira)
 
 
 @dataclass
@@ -98,17 +107,11 @@ class SplitCfg:
 
 @dataclass
 class RefineCfg:
-    kind: str = "none"  # none | (futuro) cnn
-
-
-@dataclass
-class TrackCfg:
-    max_dist: float = 40.0
-    max_missed: int = 5
-    max_occluded: int = 60
-    area_weight: float = 0.25
-    min_hits: int = 3
-    velocity_decay: float = 0.8
+    kind: str = "none"  # none | cnn (separa os amontoados com a CNN de celegans_seg/cnn.py)
+    weights: str = "models/cluster_cnn.pt"
+    threshold: float = 0.5  # probabilidade minima do canal para entrar na mascara do verme
+    min_area: int = 20  # canais com menos pixels que isso sao descartados
+    use_prev_count: bool = False  # True: mantem os n canais mais provaveis, n = vermes que havia no quadro anterior (nao melhorou no pipeline, ver README)
 
 
 @dataclass
@@ -121,7 +124,6 @@ class ExportCfg:
 @dataclass
 class VizCfg:
     save_every: int = 1
-    trail_length: int = 60
     gif: bool = True
     gif_step: int = 2
     debug_max_panels: int = 3
@@ -134,7 +136,7 @@ class OutputCfg:
 
 DEFAULT_STAGES = [
     "normalize", "denoise", "background", "threshold", "morphology", "labeling",
-    "analysis", "split", "refine", "tracking", "evaluate", "export", "visualize",
+    "analysis", "split", "refine", "evaluate", "export", "visualize",
 ]
 
 
@@ -150,7 +152,6 @@ class Config:
     analysis: AnalysisCfg = field(default_factory=AnalysisCfg)
     split: SplitCfg = field(default_factory=SplitCfg)
     refine: RefineCfg = field(default_factory=RefineCfg)
-    tracking: TrackCfg = field(default_factory=TrackCfg)
     export: ExportCfg = field(default_factory=ExportCfg)
     viz: VizCfg = field(default_factory=VizCfg)
     output: OutputCfg = field(default_factory=OutputCfg)

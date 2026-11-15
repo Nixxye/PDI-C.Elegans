@@ -37,11 +37,10 @@ class Instance:
     """Um verme (ou hipotese de verme) depois da separacao."""
     id: int  # valor em ctx.inst_labels
     component_id: int
-    source: str  # single | watershed | cnn
+    source: str  # single | cluster (amontoado nao separado) | watershed | cnn
     area: int
     centroid: tuple
-    ambiguous: bool = False  # veio de um amontoado: identidade pouco confiavel
-    track_id: int | None = None
+    ambiguous: bool = False  # veio de um amontoado: separacao menos confiavel
 
 
 @dataclass
@@ -53,9 +52,11 @@ class FrameContext:
     valid: np.ndarray | None = None  # bool: False onde nao ha dado (moldura preta); None = tudo valido
     image: np.ndarray | None = None  # float32 [0,1], verme escuro
     signal: np.ndarray | None = None  # float32 [0,1], verme CLARO (alto = verme)
+    signal_spatial: np.ndarray | None = None  # idem, mas por top-hat (sem fundo temporal): completa vermes parados
     mask: np.ndarray | None = None  # bool
     labels: np.ndarray | None = None  # int32, um rotulo por componente conexo
     components: list = field(default_factory=list)
+    cluster_mask: np.ndarray | None = None  # bool: pixels dos amontoados (a mascara que vai para a CNN)
     inst_labels: np.ndarray | None = None  # int32, um rotulo por verme
     instances: list = field(default_factory=list)
     artifacts: dict = field(default_factory=dict)  # imagens intermediarias (para figuras)

@@ -84,7 +84,9 @@ class BackgroundSubtraction(Stage):
         return self.cfg.background.method == "median"
 
     def fit(self, samples):
-        self.bg = np.median(np.stack([s.image for s in samples]), axis=0).astype(np.float32)
+        # percentil 50 = mediana; vermes sao escuros, entao um percentil mais alto escolhe, em cada pixel,
+        # o valor de quando NAO havia verme (menos chance de absorver um verme que fica parado)
+        self.bg = np.percentile(np.stack([s.image for s in samples]), self.cfg.background.percentile, axis=0).astype(np.float32)
         self.env.shared["background"] = self.bg
 
     def process(self, ctx):
@@ -97,5 +99,18 @@ class BackgroundSubtraction(Stage):
             sig = 1.0 - ctx.image
         else:
             raise ValueError(f"background.method desconhecido: {m}")
-        ctx.signal = sig.astype(np.float32)
+        sig = sig.astype(np.float32)
+        b = self.cfg.background
+        if b.close_kind == "disk":
+            sig = ops.gray_closing(sig, b.close_size)
+        elif b.close_kind == "lines":
+            sig = ops.oriented_closing(sig, b.close_size)
+        elif b.close_kind == "gauss":
+            sig = ops.gaussian(sig, float(b.close_size))
+        elif b.close_kind != "none":
+            raise ValueError(f"background.close_kind desconhecido: {b.close_kind}")
+        ctx.signal = sig
         ctx.save_artifact("signal", ctx.signal)
+        if self.cfg.threshold.grow_dist > 0 and m == "median":
+            ctx.signal_spatial = ops.black_tophat(ctx.image, self.cfg.background.tophat_size).astype(np.float32)
+            ctx.save_artifact("signal_spatial", ctx.signal_spatial)

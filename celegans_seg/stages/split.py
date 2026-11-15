@@ -52,9 +52,15 @@ class WatershedSplitter(Stage):
                     continue
                 inst[r0:r1, c0:c1][pm] = nxt
                 cy, cx = ndi.center_of_mass(pm)
+                if not comp.is_cluster:
+                    source = "single"
+                elif int(pieces.max()) > 1:
+                    source = "watershed"
+                else:
+                    source = "cluster"  # amontoado nao separado: so a mascara "aqui ha varios vermes"
                 instances.append(Instance(
                     id=nxt, component_id=comp.id,
-                    source="watershed" if comp.is_cluster and int(pieces.max()) > 1 else "single",
+                    source=source,
                     area=int(pm.sum()), centroid=(cy + r0, cx + c0),
                     ambiguous=comp.is_cluster,
                 ))

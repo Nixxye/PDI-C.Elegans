@@ -1,6 +1,6 @@
-"""Visualizacao: sobreposicao com contorno + ID + rastro, painel de etapas e GIF.
+"""Visualizacao: contorno de cada verme sobre o quadro, painel de etapas e GIF.
 
-Cores por ID usam uma pseudocolorizacao de rotulos, como o label2rgb da [Aula 10, pag. 29].
+A cor de cada instancia usa uma pseudocolorizacao de rotulos, como o label2rgb da [Aula 10, pag. 29].
 """
 from __future__ import annotations
 
@@ -11,6 +11,9 @@ from PIL import Image, ImageDraw
 from scipy import ndimage as ndi
 
 from ..core import Stage
+
+
+CLUSTER_COLOR = (255, 40, 40)  # amontoado nao separado (vai para a CNN)
 
 
 def id_color(i: int) -> tuple:
@@ -30,30 +33,20 @@ class Visualizer(Stage):
 
     def process(self, ctx):
         v = self.cfg.viz
-        tracker = self.env.shared.get("tracker")
         self.dir.mkdir(parents=True, exist_ok=True)
         rgb = np.stack([ctx.raw] * 3, axis=-1).copy()
         for inst in ctx.instances:
             m = ctx.inst_labels == inst.id
             edge = m & ~ndi.binary_erosion(m)
-            tid = inst.track_id or 0
             if inst.ambiguous:  # veio de amontoado: contorno mais grosso
                 edge = ndi.binary_dilation(edge) & m
-            rgb[edge] = id_color(tid)
+            rgb[edge] = CLUSTER_COLOR if inst.source == "cluster" else id_color(inst.id)
         img = Image.fromarray(rgb)
         d = ImageDraw.Draw(img)
-        if tracker is not None:
-            for t in tracker.tracks.values():
-                if not tracker.confirmed(t):
-                    continue
-                pts = [(x, y) for f, y, x, st, a, amb in t.history[-v.trail_length:]]
-                if len(pts) > 1:
-                    d.line(pts, fill=id_color(t.id), width=1)
         for inst in ctx.instances:
-            trk = tracker.tracks.get(inst.track_id) if tracker else None
-            if inst.track_id and (tracker is None or (trk is not None and tracker.confirmed(trk))):
+            if inst.source == "cluster":  # amontoado que a CNN nao separou
                 y, x = inst.centroid
-                d.text((x + 4, y - 4), str(inst.track_id), fill=id_color(inst.track_id))
+                d.text((x - 20, y - 5), "amontoado", fill=CLUSTER_COLOR)
         if ctx.index % max(v.save_every, 1) == 0:
             img.save(self.dir / f"{ctx.index:05d}.png")
         if v.gif and ctx.index % max(v.gif_step, 1) == 0:
@@ -81,8 +74,8 @@ class Visualizer(Stage):
             ("4. limiar [Aula 08 p.10]", a.get("mask_raw"), "gray"),
             ("5. morfologia [Aula 08 p.24-27]", a.get("mask_clean"), "gray"),
             ("6. rotulos [Aula 08 p.50-60]", a.get("labels"), "nipy_spectral"),
-            ("7. distancia [Aula 01c p.11]", a.get("dist"), "magma"),
-            ("8. watershed [Aula 11 p.31-39]", a.get("inst_labels"), "nipy_spectral"),
+            ("7. amontoados (mascara p/ CNN)", a.get("cluster_mask"), "gray"),
+            ("8. instancias: vermes + amontoados", a.get("inst_labels"), "nipy_spectral"),
         ]
         fig, axes = plt.subplots(2, 4, figsize=(16, 8))
         for ax, (title, im, cmap) in zip(axes.ravel(), items):
@@ -98,7 +91,7 @@ class Visualizer(Stage):
     def finish(self):
         if self.cfg.viz.gif and self.gif_frames:
             self.gif_frames[0].save(
-                self.env.out_dir / "tracking.gif", save_all=True, append_images=self.gif_frames[1:],
+                self.env.out_dir / "overlay.gif", save_all=True, append_images=self.gif_frames[1:],
                 duration=100, loop=0,
             )
 

@@ -29,6 +29,22 @@ class Threshold(Stage):
             mask = ops.local_mean_threshold(s8, c.adaptive_window, c.adaptive_offset) & (s8 > c.min_threshold)
         else:
             raise ValueError(f"threshold.method desconhecido: {c.method}")
+        ctx.save_artifact("mask_temporal", mask)  # so o que o Otsu pegou no sinal da etapa 4
+        if c.grow_dist > 0 and ctx.signal_spatial is not None:
+            # O fundo temporal "absorve" a parte do verme que fica parada (sinal fraco no corpo/cauda), mas
+            # o verme continua escuro na imagem. Entao: sementes = mascara temporal; completa com o
+            # top-hat (escuro em relacao a vizinhanca, sem depender do fundo) so perto das sementes
+            # e so o que esta ligado a elas. Nao esta nos slides (reconstrucao geodesica).
+            s8s = np.clip(ctx.signal_spatial * 255.0 * c.gain, 0, 255).astype(np.uint8)
+            weak = s8s > t * c.grow_thr  # mesmo rigor do limiar principal: limiar proprio (Otsu do top-hat) pegava a sujeira do agar
+            lab, n = ops.label_components(mask)
+            lab, n = ops.remove_small(lab, n, c.grow_seed_area)
+            seeds = lab > 0
+            near = ndi.distance_transform_edt(~seeds) <= c.grow_dist
+            added = ops.opening((weak & near) | seeds, c.grow_open)  # espinhos finos nao passam; cauda (largura de verme) passa
+            cand, nc = ops.label_components(added | seeds)
+            mask = np.isin(cand, np.unique(cand[seeds]))
+            ctx.metrics["grown_px"] = int(mask.sum() - seeds.sum())
         if ctx.valid is not None:
             mask = mask & ctx.valid
         ctx.mask = mask
@@ -61,7 +77,13 @@ class Labeling(Stage):
 
     def process(self, ctx):
         lab, n = ops.label_components(ctx.mask)
-        lab, n = ops.remove_small(lab, n, self.cfg.labeling.min_area)
+        c = self.cfg.labeling
+        lab, n = ops.remove_small(lab, n, c.min_area)
+        if c.bridge_gap > 0 and n > 1:
+            # verme partido em dois (meio parado/claro): liga os pedacos grandes e rotula de novo.
+            # Feito DEPOIS de tirar os pequenos: ligar tambem os pequenos junta sujeira do agar
+            # (testado: bridge_min_area 60 gerou amontoados falsos)
+            lab, n = ops.label_components(ops.bridge_components(lab, n, c.bridge_gap, c.bridge_min_area))
         ctx.labels = lab
         ctx.mask = lab > 0
         ctx.metrics["n_components"] = n

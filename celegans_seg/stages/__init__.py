@@ -7,10 +7,9 @@ from .analysis import ComponentAnalysis
 from .evaluate import Evaluate
 from .export import ClusterPatchExporter
 from .preprocess import BackgroundSubtraction, Denoise, Normalize
-from .refine import NullRefiner
+from .refine import CNNRefiner, NullRefiner
 from .segment import Labeling, Morphology, Threshold
 from .split import WatershedSplitter
-from .tracking import Tracker
 from .viz import Visualizer
 
 REGISTRY = {
@@ -22,8 +21,7 @@ REGISTRY = {
     "labeling": Labeling,
     "analysis": ComponentAnalysis,
     "split": WatershedSplitter,
-    "refine": NullRefiner,
-    "tracking": Tracker,
+    "refine": lambda cfg, env: CNNRefiner(cfg, env) if cfg.refine.kind == "cnn" else NullRefiner(cfg, env),
     "evaluate": Evaluate,
     "export": ClusterPatchExporter,
     "visualize": Visualizer,

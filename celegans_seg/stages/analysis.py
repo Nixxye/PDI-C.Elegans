@@ -70,4 +70,7 @@ class ComponentAnalysis(Stage):
                 is_cluster=is_cluster,
             ))
         ctx.components = comps
-        ctx.metrics["n_clusters"] = sum(c.is_cluster for c in comps)
+        cl_ids = [c.id for c in comps if c.is_cluster]
+        ctx.cluster_mask = np.isin(ctx.labels, cl_ids) if cl_ids else np.zeros(ctx.labels.shape, bool)
+        ctx.save_artifact("cluster_mask", ctx.cluster_mask)
+        ctx.metrics["n_clusters"] = len(cl_ids)

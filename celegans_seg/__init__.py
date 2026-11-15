@@ -1,4 +1,4 @@
-"""Segmentacao e rastreamento de C. elegans: parte 1 (PDI) + gancho para a parte 2 (CNN)."""
+"""Segmentacao de C. elegans: parte 1 (PDI classico) + parte 2 (CNN que separa os amontoados)."""
 from pathlib import Path
 
 from .config import Config, load_config

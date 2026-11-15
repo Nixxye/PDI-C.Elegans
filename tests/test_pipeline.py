@@ -57,7 +57,7 @@ class TestEndToEnd(unittest.TestCase):
             ctxs = list(pipe.run())
             self.assertEqual(len(ctxs), 15)
             self.assertGreater(np.mean([c.metrics["dice_semantic"] for c in ctxs]), 0.7)
-            self.assertTrue((Path(tmp) / "out" / "tracks.csv").exists())
+            self.assertTrue((Path(tmp) / "out" / "metrics.csv").exists())
 
 
 if __name__ == "__main__":
