@@ -6,7 +6,7 @@ Explica, aula por aula, **o que foi usado**, **como funciona** e **por que entra
 
 ## Visão geral: por que esse conteúdo
 
-O problema tem três partes: **(1)** separar vermes do fundo, **(2)** separar vermes **entre si** quando se tocam, **(3)** seguir cada um nos quadros. As aulas 03 a 08 resolvem (1) e dão as ferramentas para (2). A Aula 08 traz o pipeline-base do projeto (`Imagem → Top-hat → Limiarização → Morfologia → Labeling`, pág. 71) e a Aula 11 traz o watershed. O que os slides **não** resolvem — vermes sobrepostos e rastreamento — é o que motiva a CNN e o rastreador.
+O problema tem duas partes: **(1)** separar vermes do fundo e **(2)** separar vermes **entre si** quando se tocam. As aulas 03 a 08 resolvem (1) e dão as ferramentas para (2). A Aula 08 traz o pipeline-base do projeto (`Imagem → Top-hat → Limiarização → Morfologia → Labeling`, pág. 71) e a Aula 11 traz o watershed. O que os slides **não** resolvem — vermes sobrepostos — é o que motiva a CNN.
 
 | Aula | Tema | Usado em |
 |---|---|---|
@@ -93,7 +93,7 @@ O problema tem três partes: **(1)** separar vermes do fundo, **(2)** separar ve
 - *No projeto (`io.to_gray_u8`):* qualquer entrada colorida é convertida para cinza com essa fórmula (a mesma do modo `'L'` do PIL).
 
 **Pseudocolorização de rótulos (pág. 29, `label2rgb`).**
-- *No projeto (`stages/viz.py`):* cada ID de verme ganha uma cor distinta nos contornos e nos painéis.
+- *No projeto (`stages/viz.py`):* cada verme (instância) ganha uma cor distinta nos contornos e nos painéis.
 
 ## Aula 11 — Watershed
 
@@ -108,7 +108,8 @@ O problema tem três partes: **(1)** separar vermes do fundo, **(2)** separar ve
 | Elemento | O quê | Por quê |
 |---|---|---|
 | **Fundo por mediana temporal** | mediana de ~25 quadros espalhados na sequência; `signal = fundo − quadro` | vermes se movem, a placa não: a mediana "apaga" os vermes e sobra só o fundo. Limite: verme parado entra no fundo |
-| **Rastreador** | associação por algoritmo húngaro (`scipy.optimize.linear_sum_assignment`), predição de posição por velocidade, estado "ocluído" | a disciplina termina na segmentação; rastrear é o que dá "cada verme individualmente através dos frames" |
+| **Ajustes para verme parado** | percentil 70 (e não a mediana) no fundo; `labeling.bridge_gap` liga pedaços de um verme partido; `threshold.grow_dist` completa a cauda com o top-hat | o fundo temporal absorve a parte do verme que fica parada (ver `docs/EXPERIMENTOS.md`) |
+| **CNN** (`celegans_seg/cnn.py`) | U-Net que separa os vermes dentro de cada amontoado | é o problema que os slides não resolvem: vermes sobrepostos |
 | **Detecção de amontoado** | área ≥ 1,5 × área de referência (mediana das áreas) | decide quem segue direto e quem vai para o watershed/CNN. Subestima quando há sobreposição forte |
 | **Avaliação** | Dice (união das máscaras), precisão/recall/F1 a IoU ≥ 0,5 por instância, recall nos amontoados | métricas padrão de segmentação; PSNR/SSIM (Aula 05) não medem sobreposição de máscaras |
 
@@ -125,4 +126,4 @@ O problema tem três partes: **(1)** separar vermes do fundo, **(2)** separar ve
 | Esqueleto, distância | `ops.thin`, `ops.skeleton_stats`, `ops.distance_transform` → `ComponentAnalysis` |
 | Watershed | `stages/split.py` → `WatershedSplitter` |
 
-Veja o `README.md` para o diagrama do pipeline e para como a Parte 1 entrega dados à CNN.
+Veja o `README.md` para o diagrama do pipeline e `docs/` para os experimentos e os dados.

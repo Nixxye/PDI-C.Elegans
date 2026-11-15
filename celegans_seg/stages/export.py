@@ -60,9 +60,6 @@ class ClusterPatchExporter(Stage):
             return
         self.dir.mkdir(parents=True, exist_ok=True)
         gt = self.env.masks.instances(ctx.name) if self.env.masks else []
-        prev_gt = []  # gabarito do quadro anterior (treino da CNN com informacao temporal)
-        if self.env.masks and ctx.index > 0:
-            prev_gt = self.env.masks.instances(self.env.source.name(ctx.index - 1))
         s8 = np.clip(ctx.signal * 255 * self.cfg.threshold.gain, 0, 255).astype(np.uint8)
         for comp in targets:
             cy, cx = (int(round(v)) for v in comp.centroid)
@@ -86,10 +83,6 @@ class ClusterPatchExporter(Stage):
                 g = [crop_center(x, cy, cx, S) for x in gt]
                 g = [x for x in g if x.any() and (x & m).any()]  # vermes deste amontoado
                 data["gt"] = np.stack(g) if g else np.zeros((0, S, S), bool)
-            if prev_gt:
-                pg = [crop_center(x, cy, cx, S) for x in prev_gt]
-                pg = [x for x in pg if x.any()]
-                data["prev_gt"] = np.stack(pg) if pg else np.zeros((0, S, S), bool)
             fname = f"f{ctx.index:05d}_c{comp.id:02d}.npz"
             np.savez_compressed(self.dir / fname, **data)
             self.rows.append(dict(file=fname, frame=ctx.index, component=comp.id, n_est=comp.n_est,

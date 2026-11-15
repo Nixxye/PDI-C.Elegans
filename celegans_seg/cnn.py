@@ -4,16 +4,17 @@ Arquivo independente do pipeline classico: so precisa de torch. Recebe o recorte
 `stages/export.py` gera para cada amontoado (imagem, sinal e a mascara do amontoado) e devolve
 UMA MASCARA POR VERME (as mascaras podem se sobrepor).
 
-Modelo ("slots", sem pos-processamento classico):
-  - U-Net de 4 niveis com contexto global: 3 canais de entrada (imagem, sinal pos-fundo, mascara do amontoado) -> K canais
-    de saida (K = 6, o maximo de vermes por amontoado). Cada canal e a mascara de UM verme.
-  - A ordem dos canais nao importa: no treino, cada verme do gabarito e casado com o canal que
-    melhor o descreve (algoritmo hungaro sobre o Dice). So os canais casados sao cobrados na MASCARA;
-    quem diz se um canal "existe" (tem verme) e uma saida a parte, uma probabilidade de existencia por
-    canal (como o DETR). Isso evita o defeito da versao anterior: canais sem verme eram forcados a sair
-    vazios, a maioria dos amontoados tem so 2 vermes, e a rede aprendia a devolver sempre 2.
-  - Saidas sobrepostas sao permitidas (vermes cruzados).
+Modelo ("slots"):
+  - U-Net de 4 niveis com contexto global: 3 canais de entrada (imagem, sinal pos-fundo, mascara do
+    amontoado) -> K = 6 canais de saida, cada um a mascara de UM verme, mais uma probabilidade de
+    existencia por canal (se aquele canal tem verme).
+  - A ordem dos canais nao importa: no treino, cada verme do gabarito e casado com o canal que melhor o
+    descreve (algoritmo hungaro sobre o Dice). So os canais casados levam a perda de mascara; a existencia
+    e aprendida a parte (como no DETR).
   - So a regiao dentro da mascara do amontoado conta (perda e saida).
+
+Treino: so ~13 % dos amontoados reais tem 3+ vermes e a rede aprendia a devolver sempre 2. Metade das
+amostras de treino sao amontoados SINTETICOS (vermes de outros recortes colados com a mascara exata).
 
 Uso:
   treino:   python tools/train_cnn.py
@@ -22,7 +23,6 @@ Uso:
 """
 from __future__ import annotations
 
-import csv
 import json
 import time
 from pathlib import Path
@@ -35,7 +35,6 @@ from scipy import ndimage as ndi
 from scipy.optimize import linear_sum_assignment
 
 K_SLOTS = 6
-PREV_DILATE = 10  # px: vermes do quadro anterior que contam para este amontoado (eles andam entre os quadros)
 MIN_TARGET_AREA = 12  # vermes do gabarito menores que isso (dentro da mascara) sao ignorados
 
 
@@ -59,9 +58,9 @@ class ClusterNet(nn.Module):
     medios DENTRO da mascara daquele canal, mais a area dela.
     """
 
-    def __init__(self, k_slots: int = K_SLOTS, ch=(16, 32, 64, 128, 256), in_ch: int = 3):
+    def __init__(self, k_slots: int = K_SLOTS, ch=(16, 32, 64, 128, 256)):
         super().__init__()
-        self.enc = nn.ModuleList([_block(in_ch, ch[0]), _block(ch[0], ch[1]), _block(ch[1], ch[2]), _block(ch[2], ch[3])])
+        self.enc = nn.ModuleList([_block(3, ch[0]), _block(ch[0], ch[1]), _block(ch[1], ch[2]), _block(ch[2], ch[3])])
         self.mid = _block(ch[3], ch[4])
         self.glob = nn.Sequential(nn.Linear(ch[4], ch[4]), nn.ReLU(inplace=True))
         self.fuse = nn.Conv2d(ch[4] * 2, ch[4], 1)
@@ -95,37 +94,12 @@ class ClusterNet(nn.Module):
 # Dados
 # --------------------------------------------------------------------------------------
 
-def prev_info(patch: dict) -> tuple[np.ndarray | None, int]:
-    """(uniao das mascaras dos vermes do quadro anterior perto deste amontoado, quantos sao) ou (None, 0).
-
-    Execucao: o `refine` ja entrega `prev_union` e `prev_n` (saida do sistema no quadro anterior).
-    Treino/conferencia: vem do gabarito do quadro anterior (`prev_gt`): so os vermes que encostam no
-    amontoado dilatado de PREV_DILATE px.
-    """
-    if patch.get("prev_union") is not None:
-        return patch["prev_union"], int(patch.get("prev_n", 0))
-    pg = patch.get("prev_gt")
-    if pg is None or not len(pg):
-        return None, 0
-    near = ndi.binary_dilation(patch["mask"], iterations=PREV_DILATE)
-    keep = [w for w in pg if (w & near).any()]
-    if not keep:
-        return None, 0
-    return np.any(keep, axis=0), len(keep)
-
-
-def patch_to_input(patch: dict, in_ch: int = 3) -> np.ndarray:
-    """(in_ch, S, S) float32: imagem, sinal, mascara [+ uniao dos vermes do quadro anterior, contagem/6].
-    Mesmo preparo no treino e na inferencia; sem quadro anterior os dois canais extras ficam zerados."""
+def patch_to_input(patch: dict) -> np.ndarray:
+    """(3, S, S) float32: imagem, sinal pos-fundo, mascara do amontoado. Mesmo preparo no treino e na inferencia."""
     img = (patch["image"].astype(np.float32) / 255.0 - 0.58) / 0.2
     sig = patch["signal"].astype(np.float32) / 255.0
     msk = patch["mask"].astype(np.float32)
-    chans = [img, sig, msk]
-    if in_ch >= 5:
-        union, n = prev_info(patch)
-        chans.append(np.zeros_like(msk) if union is None else union.astype(np.float32))
-        chans.append(np.full_like(msk, min(n, K_SLOTS) / K_SLOTS))
-    return np.stack(chans)
+    return np.stack([img, sig, msk])
 
 
 def load_patches(root: str | Path, seqs: list[str] | None = None, require_gt: bool = True) -> list[dict]:
@@ -144,12 +118,8 @@ def load_patches(root: str | Path, seqs: list[str] | None = None, require_gt: bo
                 gt = np.zeros((0,) + d["mask"].shape, bool)
             else:
                 gt = d["gt"]
-            item = dict(image=d["image"], signal=d["signal"], mask=d["mask"], gt=gt, meta=meta,
-                        seq=sdir.name, file=f.name)
-            for k in ("dist", "skeleton", "ws_labels", "prev_gt"):
-                if k in d.files:
-                    item[k] = d[k]
-            out.append(item)
+            out.append(dict(image=d["image"], signal=d["signal"], mask=d["mask"], gt=gt, meta=meta,
+                            seq=sdir.name, file=f.name))
     return out
 
 
@@ -165,15 +135,14 @@ def targets_in_mask(patch: dict) -> np.ndarray:
 
 
 class PatchDataset:
-    """Amostras em RAM + aumento de dados (rotacao de 90 graus, espelho, brilho/contraste)."""
+    """Amostras em RAM + aumento de dados (rotacao de 90 graus, espelho, brilho/contraste, amontoados sinteticos)."""
 
-    def __init__(self, patches: list[dict], augment: bool = True, synth_p: float = 0.0, in_ch: int = 3):
+    def __init__(self, patches: list[dict], augment: bool = True, synth_p: float = 0.0):
         self.items = []
-        self.in_ch = in_ch
         for p in patches:
             t = targets_in_mask(p)
             if len(t):
-                self.items.append((patch_to_input(p, in_ch), t))
+                self.items.append((patch_to_input(p), t))
         self.augment = augment
         self.synth_p = synth_p  # chance de fabricar um amontoado maior colando vermes de outros recortes
         self.rng = np.random.default_rng()
@@ -181,8 +150,9 @@ class PatchDataset:
     def _composite(self, x: np.ndarray, t: np.ndarray):
         """Amontoado sintetico: cola 1 a 3 vermes de outros recortes (com a mascara exata) sobre este.
 
-        Pouco dado tem 3+ vermes (~13 %), e a rede aprendia a devolver 2. A imagem do verme colado vem do
-        recorte de origem (verme escuro: vale o menor valor), o sinal e a mascara do amontoado sao a uniao.
+        A imagem do verme colado vem do recorte de origem (verme escuro: vale o menor valor); o sinal e a
+        mascara do amontoado sao a uniao. O verme colado precisa encostar no que ja existe, porque um
+        amontoado real e um bloco so.
         """
         S = x.shape[1]
         x, t = x.copy(), list(t)
@@ -196,7 +166,7 @@ class PatchDataset:
                 continue
             near = ndi.binary_dilation(x[2] > 0, iterations=2)
             wm = None
-            for _try in range(40):  # um amontoado real e um bloco so: o verme colado precisa encostar no que ja existe
+            for _try in range(40):
                 dy = int(self.rng.integers(-ys.min(), S - ys.max()))
                 dx = int(self.rng.integers(-xs.min(), S - xs.max()))
                 cand = np.zeros_like(w)
@@ -206,17 +176,14 @@ class PatchDataset:
                     break
             if wm is None:
                 continue
-            src = np.zeros_like(w)
-            src[ys, xs] = True
-            sh = lambda a: np.roll(np.roll(a, dy, axis=-2), dx, axis=-1)  # noqa: E731  (o verme nao atravessa a borda)
-            x[0] = np.where(wm, np.minimum(x[0], sh(xb[0])), x[0])
-            x[1] = np.where(wm, np.maximum(x[1], sh(xb[1])), x[1])
+
+            def shifted(a):  # o verme nao atravessa a borda do recorte
+                return np.roll(np.roll(a, dy, axis=-2), dx, axis=-1)
+
+            x[0] = np.where(wm, np.minimum(x[0], shifted(xb[0])), x[0])
+            x[1] = np.where(wm, np.maximum(x[1], shifted(xb[1])), x[1])
             x[2] = np.maximum(x[2], wm.astype(np.float32))
             t = [a & (x[2] > 0) for a in t] + [wm]
-            if self.in_ch >= 5 and x[4].max() > 0:  # no quadro anterior o verme colado estava um pouco deslocado
-                jit = np.roll(np.roll(wm, int(self.rng.integers(-3, 4)), axis=0), int(self.rng.integers(-3, 4)), axis=1)
-                x[3] = np.maximum(x[3], jit.astype(np.float32))
-                x[4] = np.minimum(x[4] + 1.0 / K_SLOTS, 1.0)
         return x, np.stack(t)
 
     def __len__(self):
@@ -226,13 +193,6 @@ class PatchDataset:
         x, t = self.items[i]
         if self.augment and self.synth_p > 0 and self.rng.random() < self.synth_p:
             x, t = self._composite(x, t)
-        if self.augment and self.in_ch >= 5:  # o quadro anterior nem sempre existe nem e perfeito
-            x = x.copy()
-            r = self.rng.random()
-            if r < 0.2:
-                x[3:] = 0.0
-            elif r < 0.4 and x[4].max() > 0:
-                x[4] = np.clip(x[4] + self.rng.choice([-1, 1]) / K_SLOTS, 0.0, 1.0)
         if self.augment:
             k = np.random.randint(4)
             x, t = np.rot90(x, k, axes=(1, 2)), np.rot90(t, k, axes=(1, 2))
@@ -278,7 +238,7 @@ def slot_loss(logits: torch.Tensor, exist: torch.Tensor, targets: list[np.ndarra
 
 
 # --------------------------------------------------------------------------------------
-# Treino
+# Treino e avaliacao
 # --------------------------------------------------------------------------------------
 
 def match_scores(pred: list[np.ndarray], gt: list[np.ndarray], thr: float = 0.5) -> dict:
@@ -316,30 +276,25 @@ def evaluate(separator: "ClusterSeparator", patches: list[dict]) -> dict:
     return dict(f1=f1_from(tot), count_acc=n_ok / max(n, 1), n_patches=n, **tot)
 
 
-def train(patches: list[dict], out_path: str | Path, val_patches: list[dict] | None = None, epochs: int = 60,
-          balance: float = 0.0, synth_p: float = 0.0, temporal: bool = False, batch: int = 16, lr: float = 2e-3, device: str | None = None, seed: int = 0, log=print) -> Path:
+def train(patches: list[dict], out_path: str | Path, val_patches: list[dict] | None = None, epochs: int = 100,
+          synth_p: float = 0.5, batch: int = 16, lr: float = 2e-3, device: str | None = None, seed: int = 0,
+          log=print) -> Path:
     """Treina e grava os pesos em `out_path` (guarda a melhor epoca pelo F1 de validacao, se houver)."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     np.random.seed(seed)
     torch.manual_seed(seed)
-    in_ch = 5 if temporal else 3
-    ds = PatchDataset(patches, augment=True, synth_p=synth_p, in_ch=in_ch)
+    ds = PatchDataset(patches, augment=True, synth_p=synth_p)
     log(f"treino: {len(ds)} recortes | validacao: {len(val_patches or [])} | dispositivo: {device}")
-    net = ClusterNet(in_ch=in_ch).to(device)
+    net = ClusterNet().to(device)
     opt = torch.optim.AdamW(net.parameters(), lr, weight_decay=1e-4)
     steps = max(len(ds) // batch, 1)
-    # amontoados com 1 verme ou 3+ sao raros (2 vermes = ~74 %); `balance` reamostra pelo numero de vermes
-    n_per = np.array([len(t) for _, t in ds.items])
-    freq = {n: (n_per == n).sum() for n in np.unique(n_per)}
-    weights = np.array([float(freq[n]) ** -balance for n in n_per])  # balance 0 = uniforme, 0.5 = 1/raiz, 1 = igual por classe
-    weights = weights / weights.sum()
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, lr, total_steps=epochs * steps)
     best, out_path = -1.0, Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     for ep in range(1, epochs + 1):
         net.train()
-        order = np.random.choice(len(ds), size=steps * batch, p=weights)
+        order = np.random.choice(len(ds), size=steps * batch)
         run = 0.0
         for s in range(steps):
             items = [ds.get(i) for i in order[s * batch:(s + 1) * batch]]
@@ -355,8 +310,7 @@ def train(patches: list[dict], out_path: str | Path, val_patches: list[dict] | N
             run += loss.item() / steps
         msg = f"epoca {ep:3d}/{epochs}  perda {run:.4f}  ({time.time() - t0:.0f}s)"
         if val_patches and (ep % 5 == 0 or ep == epochs):
-            sep = ClusterSeparator(net=net, device=device)
-            ev = evaluate(sep, val_patches)
+            ev = evaluate(ClusterSeparator(net=net, device=device), val_patches)
             msg += f"  | val F1 {ev['f1']:.3f}  contagem {ev['count_acc']:.2f}"
             if ev["f1"] > best:
                 best = ev["f1"]
@@ -375,24 +329,20 @@ class ClusterSeparator:
     """Carrega os pesos e separa um recorte de amontoado em mascaras por verme."""
 
     def __init__(self, weights: str | Path | None = None, net: ClusterNet | None = None, device: str | None = None,
-                 threshold: float = 0.5, min_area: int = 20, dup_iou: float = 0.7, exist_threshold: float = 0.5,
-                 use_prev_count: bool = False):
+                 threshold: float = 0.5, min_area: int = 20, dup_iou: float = 0.7, exist_threshold: float = 0.5):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         if net is None:
-            sd = torch.load(weights, map_location=self.device)
-            net = ClusterNet(in_ch=sd["enc.0.0.weight"].shape[1]).to(self.device)  # 3 canais (so quadro atual) ou 5 (com o anterior)
-            net.load_state_dict(sd)
+            net = ClusterNet().to(self.device)
+            net.load_state_dict(torch.load(weights, map_location=self.device))
         self.net = net
-        self.in_ch = net.enc[0][0].in_channels
         self.net.eval()
         self.threshold, self.min_area, self.dup_iou = threshold, min_area, dup_iou
         self.exist_threshold = exist_threshold
-        self.use_prev_count = use_prev_count
 
     @torch.no_grad()
     def slot_probs(self, patch: dict) -> tuple[np.ndarray, np.ndarray]:
         """(probabilidade de cada pixel em cada canal (K, S, S), probabilidade de o canal existir (K,))."""
-        x = torch.from_numpy(patch_to_input(patch, self.in_ch))[None].to(self.device)
+        x = torch.from_numpy(patch_to_input(patch))[None].to(self.device)
         masks, ex = self.net(x)
         return torch.sigmoid(masks.float())[0].cpu().numpy(), torch.sigmoid(ex.float())[0].cpu().numpy()
 
@@ -400,17 +350,13 @@ class ClusterSeparator:
         """(probs, [(canal, mascara)]): canais que existem (prob >= exist_threshold), com area minima, sem duplicata."""
         probs, exist = self.slot_probs(patch)
         mask = patch["mask"]
-        # quantos vermes havia aqui no quadro anterior (0 = nao se sabe): a rede sozinha conta mal; com essa
-        # dica mantem-se os n canais mais provaveis em vez de cortar por um limiar de existencia
-        n_prev = min(prev_info(patch)[1], len(probs)) if self.use_prev_count else 0
         cand = []
         for k in range(len(probs)):
+            if exist[k] < self.exist_threshold:
+                continue
             m = (probs[k] > self.threshold) & mask
-            if m.sum() >= self.min_area and (n_prev > 0 or exist[k] >= self.exist_threshold):
-                cand.append((k, m, float(exist[k]) * m.sum(), float(exist[k])))
-        if n_prev > 0:
-            cand = sorted(cand, key=lambda t: -t[3])[:n_prev]
-        cand = [t[:3] for t in cand]
+            if m.sum() >= self.min_area:
+                cand.append((k, m, float(exist[k]) * m.sum()))
         cand.sort(key=lambda t: -t[2])
         kept: list[tuple[int, np.ndarray]] = []
         for k, m, _ in cand:  # tira canais duplicados (mesmo verme em dois canais)

@@ -63,7 +63,6 @@ def build_panels(pipe, ctx):
     n_sep = sum(i.source in ("cnn", "watershed") for i in ctx.instances)
     gt_img = None
     if pipe.env.masks is not None:
-        gt = np.zeros(raw.shape, np.int32)
         edges = rgb.copy()
         for i, m in enumerate(pipe.env.masks.instances(ctx.name), start=1):
             edges[m & ~ndi.binary_erosion(m)] = id_color(i)  # sobreposicao preservada: cada verme tem a sua borda
@@ -123,8 +122,6 @@ def main():
     ims = []
 
     def show(k, first=False):
-        if k > 0 and cfg.refine.kind == "cnn":
-            pipe.process_frame(k - 1)  # o refine temporal usa a saida do quadro anterior
         ctx = pipe.process_frame(k)
         for idx, (ax, (title, img, cmap)) in enumerate(zip(axes.ravel(), build_panels(pipe, ctx))):
             if img is None:

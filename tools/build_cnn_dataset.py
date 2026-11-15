@@ -3,7 +3,7 @@
 Roda o pipeline de PDI (sem avaliacao/visualizacao) em cada sequencia do CSB-1 e grava,
 para cada amontoado, um .npz em  <out>/cnn_dataset/<sequencia>/  (ver stages/export.py).
 
-  python tools/build_cnn_dataset.py                       # todas as sequencias, passo 2
+  python tools/build_cnn_dataset.py                       # todas as sequencias, passo 2, recortes de 192 px
   python tools/build_cnn_dataset.py --seqs 24_0_1_1 --step 1
 """
 import argparse
@@ -23,7 +23,7 @@ def main():
     ap.add_argument("--dataset-root", default="data/csb-1_extracted/csb-1_dataset")
     ap.add_argument("--seqs", nargs="*", help="padrao: todas as sequencias de <dataset-root>/images")
     ap.add_argument("--step", type=int, default=2, help="usa 1 a cada N quadros (vizinhos sao quase iguais)")
-    ap.add_argument("--patch-size", type=int, default=128, help="lado do recorte; amontoados maiores que isso nao entram")
+    ap.add_argument("--patch-size", type=int, default=192, help="lado do recorte; amontoados maiores que isso nao entram")
     ap.add_argument("--out", default="data/cnn_patches")
     ap.add_argument("--config", default="config.yaml")
     args = ap.parse_args()

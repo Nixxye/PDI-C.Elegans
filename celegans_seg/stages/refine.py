@@ -14,7 +14,6 @@ Ao implementar, sobrescreva `refine_patch` e troque `refine.kind` no config.yaml
 from __future__ import annotations
 
 import numpy as np
-from scipy import ndimage as ndi
 
 from ..core import Instance, Stage
 from .export import crop_center
@@ -60,7 +59,7 @@ class CNNRefiner(InstanceRefiner):
 
     Monta o mesmo recorte que `export.py` grava (imagem, sinal, mascara do amontoado), pergunta a
     `cnn.ClusterSeparator` e devolve as instancias `source="cnn"` (marcadas `ambiguous`: a
-    identidade dentro de um amontoado e menos confiavel). Se a CNN nao achar >= 2 vermes, ou o
+    separacao dentro de um amontoado e menos confiavel que a de um verme isolado). Se a CNN nao achar >= 2 vermes, ou o
     amontoado nao couber no recorte, ele fica como estava.
     """
 
@@ -69,38 +68,9 @@ class CNNRefiner(InstanceRefiner):
         from ..cnn import ClusterSeparator  # so precisa de torch com refine.kind=cnn
 
         r = cfg.refine
-        self.sep = ClusterSeparator(r.weights, threshold=r.threshold, min_area=r.min_area,
-                                    use_prev_count=r.use_prev_count)
-        self.prev = None  # (indice do quadro, inst_labels, {id da instancia: quantos vermes ela vale}) do quadro anterior
-
-    def _remember(self, ctx):
-        """Guarda a saida deste quadro para o proximo (canais de entrada dos pesos `--temporal` e/ou `use_prev_count`)."""
-        comps = {c.id: c for c in ctx.components}
-        w = {i.id: (comps[i.component_id].n_est if i.source == "cluster" and i.component_id in comps else 1)
-             for i in ctx.instances}
-        self.prev = (ctx.index, ctx.inst_labels.copy(), w)
-
-    def _prev_info(self, ctx, mask_win, cy, cx, S):
-        """(uniao dos vermes do quadro anterior perto do amontoado, quantos sao), recortados na janela.
-        Instancia que ja era um amontoado nao separado vale `n_est` vermes."""
-        from ..cnn import PREV_DILATE
-
-        if self.prev is None or self.prev[0] != ctx.index - 1:
-            return None, 0
-        _, lab, weight = self.prev
-        lab_win = crop_center(lab, cy, cx, S)
-        ids = [int(i) for i in np.unique(lab_win[ndi.binary_dilation(mask_win, iterations=PREV_DILATE)]) if i > 0]
-        if not ids:
-            return None, 0
-        return np.isin(lab_win, ids), int(round(sum(weight.get(i, 1) for i in ids)))
+        self.sep = ClusterSeparator(r.weights, threshold=r.threshold, min_area=r.min_area)
 
     def process(self, ctx):
-        try:
-            self._separate(ctx)
-        finally:
-            self._remember(ctx)
-
-    def _separate(self, ctx):
         clusters = [i for i in ctx.instances if i.source == "cluster"]
         if not clusters:
             return
@@ -113,9 +83,8 @@ class CNNRefiner(InstanceRefiner):
             mask = crop_center(m_full, cy, cx, S)
             if mask.sum() != m_full.sum():  # parte do amontoado ficou fora da janela
                 continue
-            union, n_prev = self._prev_info(ctx, mask, cy, cx, S)
             lab = self.sep.separate(dict(image=crop_center(ctx.raw, cy, cx, S), signal=crop_center(s8, cy, cx, S),
-                                         mask=mask, prev_union=union, prev_n=n_prev))
+                                         mask=mask))
             if int(lab.max()) < 2:
                 continue
             full = paste_center(lab, m_full.shape, cy, cx)

@@ -111,7 +111,6 @@ class RefineCfg:
     weights: str = "models/cluster_cnn.pt"
     threshold: float = 0.5  # probabilidade minima do canal para entrar na mascara do verme
     min_area: int = 20  # canais com menos pixels que isso sao descartados
-    use_prev_count: bool = False  # True: mantem os n canais mais provaveis, n = vermes que havia no quadro anterior (nao melhorou no pipeline, ver README)
 
 
 @dataclass

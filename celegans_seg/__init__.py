@@ -6,6 +6,8 @@ from .core import Env, Pipeline
 from .io import build_inputs
 from .stages import REGISTRY
 
+__all__ = ["Config", "load_config", "build_pipeline"]
+
 
 def build_pipeline(cfg: Config) -> Pipeline:
     """Monta o pipeline na ordem de `cfg.stages`."""
