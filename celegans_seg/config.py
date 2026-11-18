@@ -32,7 +32,6 @@ class InputCfg:
     worms_dark: bool = True  # campo claro: verme escuro sobre fundo claro
     # Recortes com moldura preta de preenchimento (ex.: Zenodo 15526615): regioes de valor 0 que tocam
     # a borda sao tratadas como "sem dado" (senao parecem vermes: sao mais escuras que eles).
-    nodata_border: bool = False
 
 
 @dataclass
@@ -57,8 +56,6 @@ class BackgroundCfg:
     method: str = "median"  # median (fundo por mediana temporal) | tophat | none
     n_samples: int = 25
     percentile: float = 50.0  # 50 = mediana. Maior (ex.: 80) = fundo mais claro: nao absorve verme que fica parado
-    close_kind: str = "none"  # preenche 'cortes' escuros dentro do verme no sinal: none | disk | lines | gauss
-    close_size: int = 5  # disk: raio | lines: comprimento da linha (px) | gauss: sigma
     tophat_size: int = 31  # [Aula 08, pag. 62-71]; deve ser maior que a largura do verme
 
 
@@ -71,6 +68,7 @@ class ThresholdCfg:
     adaptive_offset: int = 20  # (0-255) acima da media local
     grow_dist: int = 0  # 0 = desligado. Completa o verme com o sinal espacial (top-hat) ate N px das sementes
     grow_seed_area: int = 150  # so componentes com pelo menos esta area servem de semente
+    spatial_min_area: int = 0  # 0 = desligado. Componentes do top-hat com pelo menos esta area entram mesmo sem semente temporal (verme parado)
     grow_open: int = 0  # raio da abertura do trecho acrescentado: tira espinhos finos (textura do agar junto do verme)
     grow_thr: float = 1.0  # limiar do sinal espacial = grow_thr x limiar do sinal temporal
 
@@ -94,15 +92,8 @@ class AnalysisCfg:
     cluster_ratio: float = 1.5  # area/area_de_referencia a partir da qual e "amontoado"
     ref_area: float = 0.0  # 0 = estimar pela mediana das areas nos quadros de amostra
     max_worms: int = 6
-
-
-@dataclass
-class SplitCfg:
-    enabled: bool = True
-    smooth_sigma: float = 1.0
-    marker_min_dist: int = 10  # px entre marcadores
-    min_dt: float = 1.5  # raio minimo (px) para ser candidato a marcador
-    min_piece_area: int = 40
+    min_mean_width: float = 5.0  # componente mais fino que isso (px) e sujeira do agar, nao verme (0 = desliga)
+    max_mean_width: float = 40.0  # mais largo que isso e mancha/bolha (0 = desliga); verme enrolado em bola fica < 33
 
 
 @dataclass
@@ -135,7 +126,7 @@ class OutputCfg:
 
 DEFAULT_STAGES = [
     "normalize", "denoise", "background", "threshold", "morphology", "labeling",
-    "analysis", "split", "refine", "evaluate", "export", "visualize",
+    "analysis", "instances", "refine", "evaluate", "export", "visualize",
 ]
 
 
@@ -149,7 +140,6 @@ class Config:
     morphology: MorphCfg = field(default_factory=MorphCfg)
     labeling: LabelCfg = field(default_factory=LabelCfg)
     analysis: AnalysisCfg = field(default_factory=AnalysisCfg)
-    split: SplitCfg = field(default_factory=SplitCfg)
     refine: RefineCfg = field(default_factory=RefineCfg)
     export: ExportCfg = field(default_factory=ExportCfg)
     viz: VizCfg = field(default_factory=VizCfg)

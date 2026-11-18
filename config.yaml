@@ -14,21 +14,21 @@ input:
   end: -1
   step: 1
   worms_dark: true               # campo claro (verme escuro). false para fluorescencia
-  nodata_border: false           # true p/ recortes com moldura preta (Zenodo 15526615 / Annotated images)
 
 normalize:   {gamma: 1.0, autocontrast: false}
 denoise:     {method: gaussian, sigma: 1.0}       # gaussian | median | bilateral | none
 background:  {method: median, n_samples: 25, percentile: 70}   # median | tophat | none. percentile 50 = mediana pura; 70 evita absorver verme parado (ver docs/EXPERIMENTOS.md)
-threshold:   {method: otsu, gain: 4.0, min_threshold: 40, grow_dist: 15, grow_thr: 1.0, grow_open: 3}   # method: otsu | adaptive. grow_dist: completa o verme (cauda) com o top-hat ate N px da mascara (0 = desliga)
+threshold:   {method: otsu, gain: 4.0, min_threshold: 40, grow_dist: 15, grow_thr: 1.0, grow_open: 3, spatial_min_area: 300}   # method: otsu | adaptive. grow_dist: completa o verme (cauda) com o top-hat ate N px da mascara (0 = desliga). spatial_min_area: verme parado (sem sinal temporal) entra pelo top-hat se o componente tiver esta area (0 = desliga)
 morphology:  {opening_radius: 1, closing_radius: 1, fill_holes: true}
 labeling:    {min_area: 150, bridge_gap: 8, bridge_min_area: 150}   # min_area: 80 no sintetico, 150 no CSB-1 (912x736). bridge_gap: liga pedacos de verme partido (0 = desliga)
 analysis:    {cluster_ratio: 1.5, ref_area: 0.0}  # ref_area 0 = estimada dos dados
-split:       {enabled: false, marker_min_dist: 10}   # false = amontoado fica como UMA mascara (vai para a CNN); true = tenta o watershed
+refine:      {kind: none}   # none = so PDI (padrao). cnn = gancho para a CNN do colega (celegans_seg/cnn.py; hoje levanta NotImplementedError)
 export:      {patch_size: 192, only_clusters: true}   # 192: cabem os amontoados grandes (128 deixava ~19 % de fora); a CNN usa o mesmo tamanho
 
 output:
   dir: runs/last
 
-# Ordem dos estagios. Remova "export"/"evaluate"/"visualize" para rodar mais leve.
+# Ordem dos estagios. So PDI por padrao: sem "export" (que grava os recortes e cluster_masks/ para a CNN).
+# Para a CNN: acrescente "export" aqui (ou use tools/build_cnn_dataset.py) e use refine.kind=cnn.
 stages: [normalize, denoise, background, threshold, morphology, labeling,
-         analysis, split, refine, evaluate, export, visualize]
+         analysis, instances, refine, evaluate, visualize]

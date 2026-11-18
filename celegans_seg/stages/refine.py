@@ -1,15 +1,10 @@
-"""PARTE 2 (gancho) - Onde a CNN entra.
+"""PARTE 2 (gancho) - Onde a CNN entra no pipeline.
 
-O pipeline classico termina com hipoteses de instancias (`ctx.instances`). Um `InstanceRefiner`
-pode substituir a separacao dos amontoados pela predicao de uma CNN, sem tocar no resto.
+O pipeline classico termina com instancias (`ctx.instances`); cada amontoado e UMA instancia `source="cluster"`.
+`CNNRefiner` troca essas instancias pelos vermes que `cnn.ClusterSeparator` separa dentro delas. O resto (avaliacao,
+visualizacao) nao muda. O que a rede recebe e devolve esta descrito no topo de celegans_seg/cnn.py.
 
-Contrato (o que a CNN recebe e devolve) - os mesmos arrays que `export.py` grava no dataset:
-  entrada : recorte quadrado (patch_size x patch_size) centrado no amontoado, com
-            `image` (cinza), `signal` (sinal pos-fundo), `mask` (mascara binaria do amontoado),
-            `dist` (transformada de distancia), `skeleton`, `ws_labels` (proposta do watershed)
-  saida   : mapa de rotulos de instancia (patch_size x patch_size, 0 = fundo, 1..k = vermes),
-            COM sobreposicao permitida se a rede for do tipo "uma mascara por verme".
-Ao implementar, sobrescreva `refine_patch` e troque `refine.kind` no config.yaml.
+`refine.kind` no config.yaml escolhe o estagio: `none` (padrao, so PDI) ou `cnn`.
 """
 from __future__ import annotations
 
@@ -19,24 +14,10 @@ from ..core import Instance, Stage
 from .export import crop_center
 
 
-class InstanceRefiner(Stage):
-    """Base: percorre os amontoados e pede a `refine_patch` um novo mapa de instancias."""
+class NullRefiner(Stage):
+    """Padrao (`refine.kind: none`): nao faz nada; os amontoados continuam como uma instancia `cluster`."""
 
     name = "refine"
-
-    def refine_patch(self, patch: dict) -> np.ndarray | None:
-        """Devolve mapa de rotulos (S x S) ou None para manter a hipotese do watershed."""
-        raise NotImplementedError
-
-    def process(self, ctx):  # pragma: no cover - sera usado pela CNN
-        raise NotImplementedError("Implemente a insercao dos novos rotulos em ctx.inst_labels/ctx.instances")
-
-
-class NullRefiner(InstanceRefiner):
-    """Padrao: nao faz nada (mantem o resultado do watershed)."""
-
-    def refine_patch(self, patch):
-        return None
 
     def process(self, ctx):
         return
@@ -54,18 +35,20 @@ def paste_center(patch: np.ndarray, shape: tuple, cy: int, cx: int) -> np.ndarra
     return out
 
 
-class CNNRefiner(InstanceRefiner):
+class CNNRefiner(Stage):
     """Troca cada amontoado (`source="cluster"`) pelos vermes que a CNN separa dentro dele.
 
     Monta o mesmo recorte que `export.py` grava (imagem, sinal, mascara do amontoado), pergunta a
-    `cnn.ClusterSeparator` e devolve as instancias `source="cnn"` (marcadas `ambiguous`: a
-    separacao dentro de um amontoado e menos confiavel que a de um verme isolado). Se a CNN nao achar >= 2 vermes, ou o
-    amontoado nao couber no recorte, ele fica como estava.
+    `cnn.ClusterSeparator.separate` e devolve as instancias `source="cnn"` (marcadas `ambiguous`: a separacao dentro de
+    um amontoado e menos confiavel que a de um verme isolado). Se a CNN nao achar >= 2 vermes, ou o amontoado nao couber
+    no recorte (`export.patch_size`), ele fica como estava.
     """
+
+    name = "refine"
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
-        from ..cnn import ClusterSeparator  # so precisa de torch com refine.kind=cnn
+        from ..cnn import ClusterSeparator  # esqueleto em celegans_seg/cnn.py (a rede e implementada la)
 
         r = cfg.refine
         self.sep = ClusterSeparator(r.weights, threshold=r.threshold, min_area=r.min_area)

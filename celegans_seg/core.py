@@ -27,6 +27,7 @@ class Component:
     n_ends: int = 0
     n_junctions: int = 0
     thickness: float = 0.0  # 2 * maximo da transformada de distancia
+    mean_width: float = 0.0  # area / comprimento do esqueleto: largura media do componente (px)
     area_ratio: float = 1.0
     n_est: int = 1  # numero estimado de vermes
     is_cluster: bool = False
@@ -37,7 +38,7 @@ class Instance:
     """Um verme (ou hipotese de verme) depois da separacao."""
     id: int  # valor em ctx.inst_labels
     component_id: int
-    source: str  # single | cluster (amontoado nao separado) | watershed | cnn
+    source: str  # single | cluster (amontoado nao separado) | cnn
     area: int
     centroid: tuple
     ambiguous: bool = False  # veio de um amontoado: separacao menos confiavel
@@ -49,7 +50,6 @@ class FrameContext:
     name: str
     raw: np.ndarray  # uint8 (H, W)
     keep_artifacts: bool = True
-    valid: np.ndarray | None = None  # bool: False onde nao ha dado (moldura preta); None = tudo valido
     image: np.ndarray | None = None  # float32 [0,1], verme escuro
     signal: np.ndarray | None = None  # float32 [0,1], verme CLARO (alto = verme)
     signal_spatial: np.ndarray | None = None  # idem, mas por top-hat (sem fundo temporal): completa vermes parados

@@ -24,10 +24,6 @@ class Normalize(Stage):
     def process(self, ctx):
         c = self.cfg.normalize
         img = ctx.raw.astype(np.float32) / 255.0
-        if self.cfg.input.nodata_border:
-            ctx.valid = ops.valid_region(ctx.raw)
-            if (~ctx.valid).any() and ctx.valid.any():
-                img[~ctx.valid] = np.median(img[ctx.valid])  # preenche com o "meio" para nao criar bordas falsas
         if not self.cfg.input.worms_dark:
             img = 1.0 - img
         if c.autocontrast:
@@ -99,17 +95,7 @@ class BackgroundSubtraction(Stage):
             sig = 1.0 - ctx.image
         else:
             raise ValueError(f"background.method desconhecido: {m}")
-        sig = sig.astype(np.float32)
-        b = self.cfg.background
-        if b.close_kind == "disk":
-            sig = ops.gray_closing(sig, b.close_size)
-        elif b.close_kind == "lines":
-            sig = ops.oriented_closing(sig, b.close_size)
-        elif b.close_kind == "gauss":
-            sig = ops.gaussian(sig, float(b.close_size))
-        elif b.close_kind != "none":
-            raise ValueError(f"background.close_kind desconhecido: {b.close_kind}")
-        ctx.signal = sig
+        ctx.signal = sig.astype(np.float32)
         ctx.save_artifact("signal", ctx.signal)
         if self.cfg.threshold.grow_dist > 0 and m == "median":
             ctx.signal_spatial = ops.black_tophat(ctx.image, self.cfg.background.tophat_size).astype(np.float32)

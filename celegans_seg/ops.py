@@ -96,34 +96,6 @@ def black_tophat(img: np.ndarray, size: int = 31) -> np.ndarray:
 # --------------------------------------------------------------------------------------
 
 
-def gray_closing(img: np.ndarray, radius: int) -> np.ndarray:
-    """Fechamento em tons de cinza (dilatacao + erosao) com disco: preenche vales escuros mais
-    estreitos que o elemento estruturante. Em `signal` (verme claro) fecha cortes dentro do verme.
-    [Aula 08, pag. 26-27 para o caso binario; a extensao a tons de cinza e a mesma ideia do top-hat, pag. 62-71]"""
-    return img if radius <= 0 else ndi.grey_closing(img, footprint=disk(radius))
-
-
-def line_footprint(length: int, angle_deg: float) -> np.ndarray:
-    fp = np.zeros((length, length), bool)
-    c = (length - 1) / 2
-    t = np.deg2rad(angle_deg)
-    for s in np.linspace(-c, c, 4 * length):
-        fp[int(round(c - s * np.sin(t))), int(round(c + s * np.cos(t)))] = True
-    return fp
-
-
-def oriented_closing(img: np.ndarray, length: int, n_angles: int = 8) -> np.ndarray:
-    """Fechamento em tons de cinza com segmentos de reta em varias orientacoes; fica com o maior
-    resultado. Liga trechos do MESMO verme ao longo do corpo sem engordar tanto na transversal
-    quanto o disco (que une vermes vizinhos)."""
-    if length <= 1:
-        return img
-    out = img
-    for a in np.arange(n_angles) * (180.0 / n_angles):
-        out = np.maximum(out, ndi.grey_closing(img, footprint=line_footprint(length, a)))
-    return out
-
-
 def disk(radius: int) -> np.ndarray:
     """Elemento estruturante em forma de disco."""
     y, x = np.ogrid[-radius : radius + 1, -radius : radius + 1]
@@ -194,16 +166,6 @@ def two_pass_labeling(mask: np.ndarray) -> tuple[np.ndarray, int]:
                 r = find(lab[y, x])
                 lab[y, x] = remap.setdefault(r, len(remap) + 1)
     return lab, len(remap)
-
-
-def valid_region(raw: np.ndarray) -> np.ndarray:
-    """False nas regioes de valor 0 conectadas a borda da imagem (moldura de preenchimento de
-    recortes); zeros no interior (verme muito escuro) continuam validos."""
-    lab, n = ndi.label(raw == 0, structure=STRUCT_8)
-    if n == 0:
-        return np.ones(raw.shape, bool)
-    edge = np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))
-    return ~np.isin(lab, edge[edge > 0])
 
 
 def bridge_components(lab: np.ndarray, n: int, gap: int, min_area: int) -> np.ndarray:

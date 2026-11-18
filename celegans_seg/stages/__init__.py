@@ -6,10 +6,10 @@ Para criar um estagio novo: herde de `core.Stage`, implemente `process(ctx)` e r
 from .analysis import ComponentAnalysis
 from .evaluate import Evaluate
 from .export import ClusterPatchExporter
+from .instances import InstanceBuilder
 from .preprocess import BackgroundSubtraction, Denoise, Normalize
 from .refine import CNNRefiner, NullRefiner
 from .segment import Labeling, Morphology, Threshold
-from .split import WatershedSplitter
 from .viz import Visualizer
 
 REGISTRY = {
@@ -20,7 +20,7 @@ REGISTRY = {
     "morphology": Morphology,
     "labeling": Labeling,
     "analysis": ComponentAnalysis,
-    "split": WatershedSplitter,
+    "instances": InstanceBuilder,
     "refine": lambda cfg, env: CNNRefiner(cfg, env) if cfg.refine.kind == "cnn" else NullRefiner(cfg, env),
     "evaluate": Evaluate,
     "export": ClusterPatchExporter,

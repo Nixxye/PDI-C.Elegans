@@ -9,10 +9,9 @@ Conteudo de cada .npz (todos S x S, S = patch_size; fora da imagem = 0):
   mask       bool    mascara binaria do amontoado (so este componente)
   dist       float16 transformada de distancia [Aula 01c, pag. 11]
   skeleton   bool    esqueleto por afinamento [Aula 08, pag. 37-48]
-  ws_labels  int16   proposta de separacao do watershed [Aula 11, pag. 31-39]
   gt         bool    (N, S, S) uma mascara por verme do gabarito -- COM sobreposicao -- se houver
   meta       json    frame, componente, bbox, n_est, area, fits (False se o amontoado nao cabe em S)
-O canal `gt` e o alvo de treino; `ws_labels`, `dist` e `skeleton` sao entradas auxiliares que a
+O canal `gt` e o alvo de treino; `dist` e `skeleton` sao entradas auxiliares que a
 CNN pode ou nao usar (ablacao: com/sem informacao classica).
 """
 from __future__ import annotations
@@ -68,14 +67,12 @@ class ClusterPatchExporter(Stage):
             m = crop_center(m_full, cy, cx, S)
             r0, c0, r1, c1 = comp.bbox
             fits = (r1 - r0) <= S and (c1 - c0) <= S
-            ws = crop_center(np.where(m_full, ctx.inst_labels, 0).astype(np.int16), cy, cx, S)
             data = dict(
                 image=crop_center(ctx.raw, cy, cx, S),
                 signal=crop_center(s8, cy, cx, S),
                 mask=m,
                 dist=ops.distance_transform(m).astype(np.float16),
                 skeleton=ops.thin(m),
-                ws_labels=ws,
                 meta=json.dumps(dict(frame=ctx.index, name=ctx.name, component=comp.id, bbox=comp.bbox,
                                      n_est=comp.n_est, area=comp.area, fits=bool(fits))),
             )

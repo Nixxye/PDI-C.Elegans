@@ -3,6 +3,4 @@ scipy>=1.11
 pillow>=10
 matplotlib>=3.8
 pyyaml>=6
-# Parte 2 (CNN, celegans_seg/cnn.py): so necessario com refine.kind=cnn ou para treinar
-# GPU NVIDIA recente (RTX 50xx): pip install torch --index-url https://download.pytorch.org/whl/cu128
-torch>=2.4
+# Parte 2 (CNN, celegans_seg/cnn.py): ainda sem implementacao; quem a fizer acrescenta aqui o torch (GPU NVIDIA recente: pip install torch --index-url https://download.pytorch.org/whl/cu128)

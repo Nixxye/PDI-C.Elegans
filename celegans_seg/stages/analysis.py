@@ -1,7 +1,7 @@
 """PARTE 1 / Etapa C - Analise dos componentes: quem e verme isolado e quem e amontoado.
 
 E o ponto de decisao do pipeline: componentes "normais" seguem direto; os "amontoados" sao
-separados (split.py) e, mais tarde, entregues a CNN (refine.py / export.py).
+virar instancias (instances.py) e, mais tarde, entregues a CNN (refine.py / export.py).
 """
 from __future__ import annotations
 
@@ -65,12 +65,37 @@ class ComponentAnalysis(Stage):
             comps.append(Component(
                 id=j, bbox=(r0, c0, sl[0].stop, sl[1].stop), area=area,
                 centroid=(cy + r0, cx + c0), skel_len=length, n_ends=ends, n_junctions=junc,
-                thickness=thick, area_ratio=ratio,
+                thickness=thick, mean_width=area / max(length, 1), area_ratio=ratio,
                 n_est=int(np.clip(round(ratio), 2, a.max_worms)) if is_cluster else 1,
                 is_cluster=is_cluster,
             ))
+        comps = self._drop_bad_shapes(ctx, comps)
         ctx.components = comps
         cl_ids = [c.id for c in comps if c.is_cluster]
         ctx.cluster_mask = np.isin(ctx.labels, cl_ids) if cl_ids else np.zeros(ctx.labels.shape, bool)
         ctx.save_artifact("cluster_mask", ctx.cluster_mask)
         ctx.metrics["n_clusters"] = len(cl_ids)
+
+    def _drop_bad_shapes(self, ctx, comps):
+        """Descarta o que nao tem forma de verme: finos demais (sujeira do agar) ou largos demais (mancha, bolha).
+
+        Criterio: largura media = area / comprimento do esqueleto. Medido no CSB-1 (4.722 componentes, 7
+        sequencias): `< 5 px` ou `> 40 px` removeu 179 componentes sem verme no gabarito e nenhum com verme.
+        Vermes enrolados em bola tem largura media ate ~33 px, por isso o limite de cima e 40.
+        Os ids dos componentes que ficam sao renumerados de 1..n; o que saiu fica em `artifacts["rejected_mask"]`.
+        """
+        a = self.cfg.analysis
+        bad = {c.id for c in comps if (0 < a.min_mean_width > c.mean_width) or (0 < a.max_mean_width < c.mean_width)}
+        ctx.metrics["n_rejected_shape"] = len(bad)
+        ctx.save_artifact("rejected_mask", np.isin(ctx.labels, list(bad)) if bad else np.zeros(ctx.labels.shape, bool))
+        if not bad:
+            return comps
+        keep = [c for c in comps if c.id not in bad]
+        lut = np.zeros(int(ctx.labels.max()) + 1, ctx.labels.dtype)
+        for new_id, c in enumerate(keep, start=1):
+            lut[c.id] = new_id
+            c.id = new_id
+        ctx.labels = lut[ctx.labels]
+        ctx.mask = ctx.labels > 0
+        ctx.save_artifact("labels", ctx.labels)
+        return keep

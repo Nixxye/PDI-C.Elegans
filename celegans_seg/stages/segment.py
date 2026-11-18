@@ -45,8 +45,13 @@ class Threshold(Stage):
             cand, nc = ops.label_components(added | seeds)
             mask = np.isin(cand, np.unique(cand[seeds]))
             ctx.metrics["grown_px"] = int(mask.sum() - seeds.sum())
-        if ctx.valid is not None:
-            mask = mask & ctx.valid
+            if c.spatial_min_area > 0:
+                # Verme parado: sem sinal temporal (o fundo o absorveu), mas escuro no top-hat. Entra sozinho
+                # se o componente do top-hat (depois da abertura que tira espinhos) for grande como um verme.
+                cs, ncs = ops.label_components(ops.opening(weak, c.grow_open))
+                big = np.bincount(cs.ravel(), minlength=ncs + 1) >= c.spatial_min_area
+                big[0] = False
+                mask = mask | big[cs]
         ctx.mask = mask
         ctx.save_artifact("mask_raw", mask)
 

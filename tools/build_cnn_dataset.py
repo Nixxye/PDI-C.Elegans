@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from celegans_seg import build_pipeline, load_config  # noqa: E402
 
 STAGES = ["normalize", "denoise", "background", "threshold", "morphology", "labeling",
-          "analysis", "split", "export"]
+          "analysis", "instances", "export"]
 
 
 def main():

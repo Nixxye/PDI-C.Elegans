@@ -19,9 +19,9 @@ O fundo é estimado com vários quadros (`sinal = fundo − quadro`). Se uma par
 
 Percentis ≥ 80 pioram a sequência `24_1_0_2` (ágar cheio de riscos escuros): surgem falsos positivos grandes (média de 2,9 amontoados por quadro, contra 0,17 com a mediana).
 
-### 1.2 Fechamento em tons de cinza do sinal (descartado, `background.close_kind`, desligado)
+### 1.2 Fechamento em tons de cinza do sinal (descartado e removido do código)
 
-A ideia "pixels vizinhos com a mesma cor" (fechamento do sinal, também com linhas orientadas e suavização gaussiana). Resolve em sequências limpas (no teste, vermes partidos 8 → 1 de 760 com disco de raio 3), mas em `24_1_0_2` funde a sujeira em blocos (amontoados por quadro 0,5 → 7-8, F1 dos isolados cai a zero). Média das 5 sequências de treino com disco de raio 3: F1 dos isolados 0,71 → 0,57. Suavização gaussiana não ajudou (Dice 0,85 → 0,81).
+Fechar o sinal (disco, linhas orientadas ou suavização gaussiana) resolve vermes partidos em sequências limpas, mas em `24_1_0_2` funde a sujeira em blocos (F1 dos isolados cai a zero; média das 5 sequências de treino 0,71 → 0,57). Não foi mantido.
 
 ### 1.3 Ponte entre pedaços (ligado: `labeling.bridge_gap: 8`)
 
@@ -43,74 +43,57 @@ O top-hat também marca textura do ágar encostada no verme, que entra como espi
 | 2 | 4,8 % | 0,789 | 0,701 | 0,849 | 0,846 |
 | **3 (padrão)** | 5,9 % | **0,801** | **0,713** | **0,852** | **0,851** |
 
-### 1.6 Detecção de amontoado
+### 1.6 Vermes não marcados (ligado: `threshold.spatial_min_area: 300`)
+
+Medido com o gabarito em 10 sequências (6.118 vermes): **337 (5,5 %) não eram marcados** (cobertura final < 20 %). Todos se perdiam **no limiar** (nenhum na morfologia nem no `min_area`; **nenhum encosta na borda**), com sinal temporal quase zero (0,07 contra 0,24 nos marcados), concentrados em `24_1_1_2` (154), `24_1_1_1` (114) e `24_2_1_2` (62): são vermes parados que o fundo temporal absorveu. Como a perda é anterior à morfologia, **a erosão (ou a abertura) da Aula 08 não traria esses vermes de volta; ela só encolhe a máscara.** O que resolve é detectar pelo top-hat, que não depende de o verme se mover: componentes do top-hat (depois da abertura de raio `grow_open`) com ≥ 300 px entram na máscara mesmo sem semente temporal.
+
+| `spatial_min_area` | vermes não marcados | precisão da máscara (pixels) | recall da máscara (pixels) | componentes por quadro |
+|---|---|---|---|---|
+| 0 (desligado) | 337 | 0,755 | 0,868 | 11,8 |
+| 450 | 14 | 0,750 | 0,921 | 12,3 |
+| **300 (padrão)** | **0** | 0,746 | 0,922 | 12,4 |
+
+**Ressalva:** o recall dessas sequências ainda é baixo (≈ 0,55-0,58 a IoU 0,5) quando o gabarito tem duplicatas: os vermes parados agora são marcados, mas a máscara deles muitas vezes não chega a IoU 0,5 (cobertura parcial ou fundida com sujeira).
+
+### 1.7 Detecção de amontoado
 
 Critério: área do componente ≥ `analysis.cluster_ratio` (1,5) × a área de referência (mediana das áreas dos componentes nos quadros de amostra; fixável com `analysis.ref_area`). Limitações: a sobreposição **reduz** a área visível (dois vermes cruzados somam menos que 2); dois vermes finos lado a lado podem ficar abaixo do limiar; um verme grande ou enrolado pode passar do limiar sem ser amontoado.
 
 Métricas que não exigem separar o amontoado: `f1_single` (vermes isolados previstos × vermes do gabarito fora de amontoados) e `cluster_dice` (máscara de amontoados prevista × a do gabarito, onde amontoado = componente conexo do gabarito com ≥ 2 vermes). Com o padrão atual, `24_2_1_1`: `f1_single` ≈ 0,85 e `cluster_dice` ≈ 0,67.
 
-O watershed por distância (Aula 11) é a alternativa clássica para separar o amontoado, mas fica **desligado** (`split.enabled: false`): vermes cruzados em X ou colados em paralelo não têm "pescoço" na máscara e o watershed erra. Nos recortes de amontoado do teste ele tem F1 0,69.
+O watershed por distância (Aula 11) foi a alternativa clássica testada para separar o amontoado e foi **removido do código** (está no git, commit `3ecc77f`): vermes cruzados em X ou colados em paralelo não têm "pescoço" na máscara e ele erra. Nos recortes de amontoado do teste teve F1 0,69.
 
-### 1.7 Sequência sintética (`tools/make_synthetic.py`)
+### 1.8 Sequência sintética (`tools/make_synthetic.py`)
 
 8 vermes em 320×320, 60 quadros: Dice ≈ 0,88, F1 por instância ≈ 0,63-0,70 e só ≈ 30 % dos vermes dentro de amontoados recuperados (sem CNN).
 
-## 2. CNN
+### 1.9 Falsos positivos e filtro de forma (ligado: `analysis.min_mean_width: 5`, `analysis.max_mean_width: 40`)
 
-### 2.1 Histórico (F1 por verme nos 574 amontoados do teste)
+`tools/pdi_report.py` conta como falso positivo um componente com menos de 30 % da área sobre o gabarito, em **dois tipos**: **tipo 1, isolado** (o PDI não o marcou como amontoado) e **tipo 2, amontoado** (vai para a CNN, mas quase não tem verme). Dois tipos de componente sem gabarito **não** contam: (1) **os que encostam na borda do quadro**, porque o gabarito do CSB-1 não anota os vermes cortados pela borda (**737 dos 924 "falsos positivos" iniciais, 80 %**); (2) **os que têm forma e contraste de verme** (`evaluate.classify_no_gt`: área 0,7 a 1,4 × a de um verme, largura média 6,5 a 10,5 px, sinal espacial médio ≥ 0,2), que são vermes reais que o gabarito simplesmente não anotou (**28**; ex.: `24_1_0_2` quadro 310). Essa regra classifica 95,8 % dos isolados que **têm** verme no gabarito como "forma de verme", e dos 28 componentes assim, **12 de 12 amostrados eram vermes reais**; os 159 sem forma de verme que sobram são rabiscos e sujeira do ágar (também conferido numa amostra de 12). Resultado: **159 falsos positivos (2,8 % dos 5.637 componentes; tipo 1: 155, 3,0 % dos isolados; tipo 2: 4, 0,9 % dos amontoados)**, mais 737 "sem gabarito na borda" e 28 "sem gabarito, com forma de verme" em linhas à parte. Dos 159, **140 estão em `24_1_0_2`** (a sequência com mais sujeira no ágar). Numa amostra de 12 dos componentes sem gabarito que **não** são da borda e sem a regra de forma de verme, 8 eram vermes reais não anotados, 2 manchas escuras redondas e 2 emaranhados de sujeira; foi isso que levou à regra de forma de verme acima.
 
-| Versão | F1 | Problema / achado |
+Medi 4.722 componentes (7 sequências; "com verme" = ≥ 60 % sobre o gabarito: 3.678; "sem verme": 966) para achar um critério de forma que tire manchas e sujeira **sem perder verme**. Critério: largura média = área ÷ comprimento do esqueleto (verme: mediana 8,2 px).
+
+| Regra | com verme perdidos | sem verme removidos |
 |---|---|---|
-| U-Net de 3 níveis (campo de visão ~60 px) | 0,75 | devolvia **sempre 2** vermes |
-| 4 níveis + contexto global + amostragem balanceada | 0,82 | 2 ou 3; nunca 4+ |
-| + cabeça de existência por canal, amostragem balanceada | 0,66 | inventava um 3º verme (155 de 427 amontoados de 2); variar o limiar de existência não resolveu (máx. 0,71) |
-| idem, perda de máscara mais forte, amostragem uniforme | 0,80 | melhorou o caso de 1 verme (9 de 38), piorou o de 3 (17 de 70) |
-| **+ amontoados sintéticos (colagem)** | **0,93** | chega a prever 4 e 5 vermes |
-| mesma receita, **sem `24_2_1_2` no treino** (gravação vizinha da de teste) | 0,94 | descarta a suspeita de vazamento entre as duas sequências |
+| largura média < 5 px (fino demais: sujeira) | 0 | 138 (14,3 %) |
+| largura média ≥ 14 px (mancha) | 21 (0,57 %) | 54 |
+| largura média ≥ 30 px | 1 | 41 |
+| largura média ≥ 40 px | **0** | 41 |
+| **< 5 px ou ≥ 40 px (padrão)** | **0** | **179 (18,5 %)** |
+| espessura ≥ 22 px | 35 | 41 |
+| junções do esqueleto por 100 px | não separa (verme também tem) | |
 
-Só ~13 % dos recortes reais têm 3+ vermes (74 % têm 2) e a rede aprendia a devolver sempre 2. O que mais ajudou foi fabricar, em metade das amostras de treino, amontoados maiores **colando 1 a 3 vermes de outros recortes** (com a máscara exata) sobre o recorte, encostados no amontoado.
+Vermes enrolados em bola têm largura média alta (até ~33 px; 16 a 24 px é comum), por isso o limite de cima tem de ser 40, e não os 14 a 20 px que "parecem" manchas. A intensidade do componente também não separa as manchas.
 
-Usar a estimativa de contagem pela área (`n_est`) para escolher quantos canais manter foi testado e não ajudou: acerta 90 % no teste, mas só 29 % em `24_1_1_2`.
+No relatório completo (10 sequências), sem × com o filtro: vermes encontrados 100 % × 100 %; acerto da máscara dos isolados 99,9 % × 99,9 %; IoU médio 0,797 × 0,797; **falsos positivos (os dois tipos) 1.103 × 924 antes da regra da borda e da regra de forma de verme; 159 com elas** (o filtro de forma tirou 179 componentes sem verme: tipo 1 de 1.091 para 913 e tipo 2 de 12 para 11, antes de descontar borda e verme não anotado), sobretudo em `24_1_0_2` (326 → 200 antes das regras de borda/verme) e `24_2_1_2` (184 → 138). Restam 2,8 % dos componentes como falso positivo. Dois tipos que o filtro **não** pega: **verme real não anotado** (não é erro do PDI) e **verme com sujeira colada** (o crescimento pelo top-hat, `grow_dist`, puxa a textura em volta e o componente fica com < 30 % de área sobre o verme e geralmente é marcado como amontoado: conta como falso positivo **tipo 2**, mas a CNN ainda o recebe). Desligue o filtro com `--set analysis.min_mean_width=0 --set analysis.max_mean_width=0`.
 
-### 2.2 Contagem de vermes no teste (linha = no gabarito; entre parênteses, o previsto)
+**"Verme pequeno" (decisão, não medição).** Os 159 falsos positivos restantes são pequenos (área mediana 255 px, comprimento do esqueleto 37 px, contraste 0,14), e os vermes do **gabarito são todos grandes** (área p10-p90 = 514-673 px, esqueleto 81 px, contraste 0,22-0,31; mesmo em `24_1_0_2`). Por isso **não dá para derivar do gabarito** o que é um verme pequeno: só 1 dos 159 cai nas faixas de área e largura dos vermes anotados. Seguindo a sua avaliação (viu a galeria e a maioria parece verme pequeno), um componente sem gabarito, fora da borda e sem forma de verme normal, com **área ≥ 150 px e contraste ≥ 0,1**, passa a ser "provável verme pequeno" e **não** conta como falso positivo (`evaluate.SMALL_WORM_MIN_AREA`, `SMALL_WORM_MIN_CONTRAST`; no relatório, `--small-min-area` e `--small-min-contrast`). Com esses valores **todos os 159 viram "verme pequeno" e os falsos positivos caem a 0**: isso vale **por definição**, sem prova de que sejam vermes (alguns podem ser sujeira escura). Como 150 px é o `labeling.min_area`, o limite de área sozinho não filtra nada. Se apertar o limite de área, os falsos positivos reaparecem: pela distribuição das áreas, com 300 px voltam ≈ 98; com 450 px, ≈ 138. A galeria (`--galeria-categorias pequeno`) mostra um por um os que foram reclassificados.
 
-**1** → 2 em 35 de 38 (ruim); **2** → 2 em 407 de 427; **3** → 3 em 64 de 70; **4** → 4 em 6 de 15 (3 em 2, 5 em 7); **5+** → 5 em 15 de 24 (4 em 9).
+## 2. CNN (removida; a cargo do colega)
 
-### 2.3 Resultados no pipeline completo (`24_2_1_1`, passo 2)
-
-| | F1 | recall | precisão | recall em amontoados |
-|---|---|---|---|---|
-| sem CNN | 0,74 | 0,75 | 0,74 | 0,05 |
-| com CNN | 0,90 | 0,97 | 0,85 | 0,91 |
-
-`f1_in_cluster` (vermes separados dentro de amontoado × vermes do gabarito que estão em amontoado): 0 → 0,66.
-
-### 2.4 Informação temporal (quadro anterior): testada e **removida do código**
-
-Ideia: dar à rede o que o sistema viu no quadro anterior. Duas formas foram implementadas e testadas; o código foi tirado para simplificar o projeto e está no histórico do git (commit `6d7095e`, "Resultados iniciais", com os pesos `models/cluster_cnn_temporal.pt`):
-
-- **5 canais de entrada** (`train_cnn.py --temporal`): os 3 de sempre mais a união das máscaras dos vermes do quadro anterior perto do amontoado e a contagem deles ÷ 6.
-- **Dica de contagem na saída** (`refine.use_prev_count`): mantém os *n* canais mais prováveis, *n* = vermes do quadro anterior.
-
-| Recorte, **quadro anterior = gabarito** (limite superior) | F1 | Contagem certa |
-|---|---|---|
-| 3 canais, limiar de existência (padrão) | 0,928 | 0,84 |
-| 3 canais + n do quadro anterior | 0,932 | 0,92 |
-| 5 canais, limiar de existência | 0,931 | 0,83 |
-| 5 canais + n do quadro anterior | 0,941 | 0,93 |
-
-| Pipeline completo, **quadro anterior = saída do sistema** | F1 | recall | recall em amontoados | `f1_in_cluster` |
-|---|---|---|---|---|
-| **3 canais, sem dica (padrão)** | **0,902** | 0,971 | 0,907 | **0,658** |
-| 5 canais | 0,892 | 0,958 | 0,857 | 0,622 |
-| 5 canais + n do quadro anterior | 0,894 | 0,966 | 0,881 | 0,632 |
-| 3 canais + n do quadro anterior | 0,893 | 0,973 | 0,912 | 0,624 |
-
-O número de vermes do quadro anterior é muito informativo (bate com o real em 91 % dos recortes quando vem do gabarito), mas a rede de 5 canais quase não o usa, e mesmo no limite superior o ganho é pequeno (+0,013 de F1). No pipeline real o número vindo da saída do sistema bate com o real em só **78 %** (primeiros 120 quadros), principalmente por excesso (amontoados de 2 vermes com 3, 4 ou 6), e uma contagem a mais acrescenta um verme falso. Não foi implementada a versão de um canal por verme.
+O código da CNN (U-Net com 6 canais de saída, existência por canal, treino com amontoados sintéticos, experimento com o quadro anterior) foi tirado do repositório. O que ficou é o esqueleto `celegans_seg/cnn.py` (ver README). O histórico completo está no git (commits `6d7095e` e `3ecc77f`). Resultados daquela versão, só como referência: F1 por verme nos 574 amontoados do teste 0,93 (watershed 0,69); o que mais ajudou foi colar vermes de outros recortes para fabricar amontoados grandes no treino; informação do quadro anterior deu ganho desprezível (+0,013 de F1 no limite superior).
 
 ## 3. O que não foi feito ou investigado
 
 - **Rastreamento.** Um rastreador simples (associação por algoritmo húngaro com predição de posição) foi implementado e **removido** por enquanto: gerava ≈ 60 IDs para ≈ 20 vermes (trilhas fragmentadas, trocas dentro de amontoados). Seguir cada verme no vídeo continua sendo o objetivo final.
-- **`24_1_1_2`**: a CNN tem F1 0,81 (watershed 0,64), mas só 29 % de contagem certa (devolve 2 para quase todo amontoado de 3-4). Causa não investigada (talvez tamanho/aparência dos vermes ou o gabarito dessa sequência).
-- Emaranhados de 4+ vermes, vermes paralelos colados e o verme enrolado sobre si ainda erram bastante (`python tools/cnn_check.py --worst` desenha os piores casos).
-- Parâmetros em pixels (`min_area`, `marker_min_dist`, `tophat_size`) foram calibrados no CSB-1 (912×736); revise-os para outra resolução.
+- Parâmetros em pixels (`min_area`, `tophat_size`) foram calibrados no CSB-1 (912×736); revise-os para outra resolução.

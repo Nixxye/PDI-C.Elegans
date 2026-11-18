@@ -6,7 +6,7 @@ Explica, aula por aula, **o que foi usado**, **como funciona** e **por que entra
 
 ## Visão geral: por que esse conteúdo
 
-O problema tem duas partes: **(1)** separar vermes do fundo e **(2)** separar vermes **entre si** quando se tocam. As aulas 03 a 08 resolvem (1) e dão as ferramentas para (2). A Aula 08 traz o pipeline-base do projeto (`Imagem → Top-hat → Limiarização → Morfologia → Labeling`, pág. 71) e a Aula 11 traz o watershed. O que os slides **não** resolvem — vermes sobrepostos — é o que motiva a CNN.
+O problema tem duas partes: **(1)** separar vermes do fundo e **(2)** separar vermes **entre si** quando se tocam. As aulas 03 a 08 resolvem (1) e dão as ferramentas para (2). A Aula 08 traz o pipeline-base do projeto (`Imagem → Top-hat → Limiarização → Morfologia → Labeling`, pág. 71). O que os slides **não** resolvem — vermes sobrepostos — é o que motiva a CNN.
 
 | Aula | Tema | Usado em |
 |---|---|---|
@@ -17,7 +17,7 @@ O problema tem duas partes: **(1)** separar vermes do fundo e **(2)** separar ve
 | 07 | domínio da frequência | só citado como alternativa |
 | 08 | segmentação e morfologia | `Threshold`, `Morphology`, `Labeling`, `ComponentAnalysis`, top-hat |
 | 10 | imagens coloridas | conversão para cinza, cores dos rótulos |
-| 11 | watershed | `WatershedSplitter` |
+| 11 | watershed | não usado (testado e removido; ver `docs/EXPERIMENTOS.md`) |
 
 ---
 
@@ -27,7 +27,7 @@ O problema tem duas partes: **(1)** separar vermes do fundo e **(2)** separar ve
 - *No projeto:* a rotulagem usa vizinhança-8 (`ops.STRUCT_8`), para que um verme fino e diagonal não seja quebrado em pedaços.
 
 **Distância entre pixels e `bwdist` (pág. 11).** A transformada de distância dá, para cada pixel, a distância ao pixel de fundo mais próximo. Pixels no meio de uma região grossa têm valor alto; nas bordas, valor baixo.
-- *No projeto (`ops.distance_transform`):* serve para (a) medir a **espessura** de cada componente e (b) fornecer os "montes" que o watershed usa para dividir amontoados. Também é entrada auxiliar da CNN.
+- *No projeto (`ops.distance_transform`):* serve para (a) medir a **espessura** de cada componente (usada também nos recortes para a CNN).
 - *Equivalente:* `bwdist(~mask)`.
 
 ## Aula 03 — Transformações ponto a ponto
@@ -44,7 +44,7 @@ O problema tem duas partes: **(1)** separar vermes do fundo e **(2)** separar ve
 **Correlação e convolução; filtros lineares (LSI).** Cada pixel vira uma combinação ponderada da sua vizinhança por um kernel.
 
 **Passa-baixas gaussiano (pág. 13-20).** Kernel `h = exp(−(x²+y²)/2σ²)/2πσ²`, normalizado (ganho DC = 1), lado ≈ `2·⌈3σ⌉+1`. Atenua altas frequências (ruído, granulação).
-- *No projeto (`ops.gaussian`):* suavização padrão, σ = 1, antes de limiarizar. Usa `truncate=3`, que reproduz exatamente o tamanho de kernel do slide. O mesmo gaussiano suaviza o mapa de distância no watershed.
+- *No projeto (`ops.gaussian`):* suavização padrão, σ = 1, antes de limiarizar. Usa `truncate=3`, que reproduz exatamente o tamanho de kernel do slide.
 - *Equivalente:* `imgaussfilt`.
 
 **Mediana (pág. 27-28).** Filtro não linear, bom para ruído sal-e-pimenta.
@@ -78,7 +78,7 @@ O problema tem duas partes: **(1)** separar vermes do fundo e **(2)** separar ve
 - *No projeto (`ops.opening`, `ops.closing`, estágio `Morphology`):* abertura remove ruído de pixels isolados; fechamento religa um verme quebrado por reflexo; o preenchimento de buracos fecha miolos de vermes enrolados. SE em disco, raio 1.
 
 **Esqueletização (pág. 37-48).** Reduz um objeto a uma linha fina. Duas abordagens: erosões sucessivas (pode romper conexões, pág. 38) e **afinamento** (preserva conectividade, pág. 45, `bwmorph(A,'skel',Inf)`). O slide observa que o esqueleto pode ter mais componentes que o objeto sem que isso seja erro (pág. 44).
-- *No projeto (`ops.thin`, algoritmo de Zhang-Suen; `ops.skeleton_stats`):* do esqueleto saem **comprimento**, **número de pontas** (pixels com 1 vizinho) e **junções** (≥ 3 vizinhos). Juntas, indicam cruzamentos: uma junção dentro de um componente sugere vermes cruzados. Esses atributos vão para o `ComponentAnalysis` e para os recortes da CNN.
+- *No projeto (`ops.thin`, algoritmo de Zhang-Suen; `ops.skeleton_stats`):* do esqueleto saem **comprimento**, **número de pontas** (pixels com 1 vizinho) e **junções** (≥ 3 vizinhos). Juntas, indicam cruzamentos: uma junção dentro de um componente sugere vermes cruzados. Esses atributos vão para o `ComponentAnalysis`.
 
 **Rotulagem / labeling (pág. 50-60).** Dá um rótulo a cada objeto conexo. Algoritmo em duas passadas com union-find: na 1ª, propaga-se o menor rótulo dos vizinhos já rotulados e registram-se as colisões (pág. 56); na 2ª, resolve-se cada rótulo até a raiz (pág. 60).
 - *No projeto:* `ops.label_components` (rápida, SciPy, vizinhança-8) é usada no pipeline; `ops.two_pass_labeling` é a **versão do slide, escrita à mão**, usada nos testes para validar a rápida (resultados idênticos).
@@ -97,9 +97,7 @@ O problema tem duas partes: **(1)** separar vermes do fundo e **(2)** separar ve
 
 ## Aula 11 — Watershed
 
-**Watershed (pág. 31-39).** Trata a imagem como relevo e "inunda" a partir dos **mínimos regionais** (marcadores); onde águas de bacias diferentes se encontrariam, fica a linha de divisão (conceito de inundação, pág. 32-36). Os slides aplicam-no ao módulo do gradiente.
-- *No projeto (`stages/split.py`):* aplicado a cada **amontoado**, mas sobre `−distância` em vez do gradiente: queremos dividir a **forma** (dois blobs unidos por um "pescoço"), então cada pico da transformada de distância vira o fundo de uma bacia. Marcadores = máximos locais da distância suavizada, no máximo `n_est` (estimado pela área), afastados de ≥ `marker_min_dist` px; bacias pequenas demais são descartadas.
-- *Limite importante:* vermes cruzados em X ou colados em paralelo **não têm pescoço**, e o watershed erra. Por isso o resultado é tratado como hipótese (`ambiguous`) e é o que a CNN deve melhorar.
+Testado para separar amontoados (distância + watershed, F1 0,69 nos recortes de teste) e **removido** do código: vermes cruzados ou colados em paralelo não têm "pescoço". Detalhes em `docs/EXPERIMENTOS.md`; o código está no git (commit `3ecc77f`).
 
 ---
 
@@ -109,8 +107,8 @@ O problema tem duas partes: **(1)** separar vermes do fundo e **(2)** separar ve
 |---|---|---|
 | **Fundo por mediana temporal** | mediana de ~25 quadros espalhados na sequência; `signal = fundo − quadro` | vermes se movem, a placa não: a mediana "apaga" os vermes e sobra só o fundo. Limite: verme parado entra no fundo |
 | **Ajustes para verme parado** | percentil 70 (e não a mediana) no fundo; `labeling.bridge_gap` liga pedaços de um verme partido; `threshold.grow_dist` completa a cauda com o top-hat | o fundo temporal absorve a parte do verme que fica parada (ver `docs/EXPERIMENTOS.md`) |
-| **CNN** (`celegans_seg/cnn.py`) | U-Net que separa os vermes dentro de cada amontoado | é o problema que os slides não resolvem: vermes sobrepostos |
-| **Detecção de amontoado** | área ≥ 1,5 × área de referência (mediana das áreas) | decide quem segue direto e quem vai para o watershed/CNN. Subestima quando há sobreposição forte |
+| **CNN** (`celegans_seg/cnn.py`) | esqueleto: a rede que separa os vermes dentro de cada amontoado será feita pelo colega | é o problema que os slides não resolvem: vermes sobrepostos |
+| **Detecção de amontoado** | área ≥ 1,5 × área de referência (mediana das áreas) | decide quem segue direto e quem vai para a CNN. Subestima quando há sobreposição forte |
 | **Avaliação** | Dice (união das máscaras), precisão/recall/F1 a IoU ≥ 0,5 por instância, recall nos amontoados | métricas padrão de segmentação; PSNR/SSIM (Aula 05) não medem sobreposição de máscaras |
 
 ## Onde cada técnica está no código
@@ -124,6 +122,5 @@ O problema tem duas partes: **(1)** separar vermes do fundo e **(2)** separar ve
 | Abertura, fechamento | `ops.opening`, `ops.closing` → `Morphology` |
 | Rotulagem | `ops.label_components`, `ops.two_pass_labeling` → `Labeling` |
 | Esqueleto, distância | `ops.thin`, `ops.skeleton_stats`, `ops.distance_transform` → `ComponentAnalysis` |
-| Watershed | `stages/split.py` → `WatershedSplitter` |
 
 Veja o `README.md` para o diagrama do pipeline e `docs/` para os experimentos e os dados.

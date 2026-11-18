@@ -29,6 +29,69 @@ def iou_matrix(pred: list[np.ndarray], gt: list[np.ndarray]) -> np.ndarray:
     return inter / np.maximum(union, 1)
 
 
+def gt_fraction(labels: np.ndarray, components: list, gt: list) -> dict:
+    """{id do componente: fracao da sua area que esta sobre algum verme do gabarito}.
+
+    Menos de 0,3 = "sem verme": sujeira, mancha, ou verme que o gabarito nao anotou (falso positivo)."""
+    if not components:
+        return {}
+    gtu = np.any(gt, axis=0) if gt else np.zeros(labels.shape, bool)
+    area = np.bincount(labels.ravel(), minlength=int(labels.max()) + 1)
+    on_gt = np.bincount(labels[gtu].ravel(), minlength=len(area))
+    return {c.id: float(on_gt[c.id] / area[c.id]) if area[c.id] else 0.0 for c in components}
+
+
+def touches_border(bbox: tuple, shape: tuple, margin: int = 2) -> bool:
+    """True se a caixa do componente encosta na borda do quadro. O gabarito do CSB-1 NAO anota os vermes cortados
+    pela borda, entao um componente sem gabarito que encosta nela e, em geral, um verme real nao anotado."""
+    r0, c0, r1, c1 = bbox
+    return r0 <= margin or c0 <= margin or r1 >= shape[0] - margin or c1 >= shape[1] - margin
+
+
+# Forma tipica de um verme, para separar "verme que o gabarito nao anotou" de sujeira entre os componentes sem gabarito.
+# Medido no CSB-1: 95,8 % dos isolados que TEM verme no gabarito caem nesta faixa; dos 187 componentes sem gabarito fora
+# da borda, 28 tem forma de verme (12 de 12 amostrados eram vermes reais) e 159 nao (rabiscos e sujeira do agar).
+WORM_AREA_RATIO = (0.7, 1.4)  # area / area de referencia de um verme
+WORM_MEAN_WIDTH = (6.5, 10.5)  # px: area / comprimento do esqueleto
+WORM_MIN_CONTRAST = 0.2  # sinal espacial (top-hat) medio
+# "Verme pequeno": o que sobra sem gabarito, fora da borda e sem forma de verme normal, mas com tamanho e contraste minimos.
+# Os vermes do gabarito sao todos grandes (area p10-p90 = 514-673 px), entao esta faixa NAO vem do gabarito: e uma DECISAO
+# (os falsos positivos tem area mediana 255 px, comprimento de esqueleto 37 px e contraste 0,14; os vermes anotados, 580 px,
+# 81 px e 0,22-0,31). Sem prova de que sejam vermes; aperte os limites para ver os falsos positivos voltarem.
+SMALL_WORM_MIN_AREA = 150  # px (= labeling.min_area: tudo que sobrou da rotulagem passa)
+SMALL_WORM_MIN_CONTRAST = 0.1
+
+
+def classify_no_gt(ctx, gt: list, thr: float = 0.3, small_min_area: int = SMALL_WORM_MIN_AREA,
+                   small_min_contrast: float = SMALL_WORM_MIN_CONTRAST) -> dict:
+    """{id: categoria} dos componentes com < `thr` da area sobre o gabarito. Categorias, nesta ordem:
+
+    - "borda": encosta na borda do quadro (o gabarito nao anota vermes cortados pela borda);
+    - "verme": tem forma, largura e contraste de verme normal (provavel verme que o gabarito nao anotou);
+    - "pequeno": area >= small_min_area e contraste >= small_min_contrast (provavel verme PEQUENO nao anotado; e uma
+      decisao, nao uma medicao: ver SMALL_WORM_MIN_AREA);
+    - "fp": o resto (falso positivo).
+    """
+    fractions = gt_fraction(ctx.labels, ctx.components, gt)
+    sig = ctx.signal_spatial if ctx.signal_spatial is not None else ctx.signal
+    area = np.bincount(ctx.labels.ravel(), minlength=int(ctx.labels.max()) + 1)
+    contrast = np.bincount(ctx.labels.ravel(), weights=sig.ravel(), minlength=len(area)) / np.maximum(area, 1)
+    out = {}
+    for c in ctx.components:
+        if fractions[c.id] >= thr:
+            continue
+        if touches_border(c.bbox, ctx.labels.shape):
+            out[c.id] = "borda"
+        elif (WORM_AREA_RATIO[0] <= c.area_ratio <= WORM_AREA_RATIO[1] and WORM_MEAN_WIDTH[0] <= c.mean_width <= WORM_MEAN_WIDTH[1]
+              and contrast[c.id] >= WORM_MIN_CONTRAST):
+            out[c.id] = "verme"
+        elif c.area >= small_min_area and contrast[c.id] >= small_min_contrast:
+            out[c.id] = "pequeno"
+        else:
+            out[c.id] = "fp"
+    return out
+
+
 class Evaluate(Stage):
     name = "evaluate"
 
@@ -77,9 +140,9 @@ class Evaluate(Stage):
         gt_single = [g for g, o in zip(gt, owner) if count[o] < 2]
         gt_cluster = np.isin(gt_lab, [o for o, n in count.items() if n >= 2]) if gt else np.zeros_like(ctx.mask)
         pred_single = [ctx.inst_labels == i.id for i in ctx.instances if i.source == "single"]
-        # separados dentro de amontoado (CNN ou watershed) x vermes do gabarito que estao em amontoado
+        # separados dentro de amontoado (CNN) x vermes do gabarito que estao em amontoado
         gt_in_cl = [g for g, o in zip(gt, owner) if count[o] >= 2]
-        pred_in_cl = [ctx.inst_labels == i.id for i in ctx.instances if i.source in ("cnn", "watershed")]
+        pred_in_cl = [ctx.inst_labels == i.id for i in ctx.instances if i.source in ("cnn",)]
         iou_c = iou_matrix(pred_in_cl, gt_in_cl)
         tp_c = 0
         if iou_c.size:
