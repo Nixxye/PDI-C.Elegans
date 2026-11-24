@@ -1,7 +1,7 @@
 """PARTE 2 - CNN que separa os vermes de um amontoado: ESQUELETO (a implementacao fica por conta de quem fizer a rede).
 
-Este arquivo so define o CONTRATO com o resto do projeto. Nao tem torch nem modelo; para ligar uma rede basta
-implementar `ClusterSeparator.predict_masks` (e `train`) e rodar com `--set refine.kind=cnn`.
+Este arquivo define o CONTRATO com o resto do projeto e liga a Mask R-CNN do colega (submodule `cnn/`): para usar,
+rode com `--set refine.kind=cnn --set refine.weights=<checkpoint.pth>` (torch e torchvision so sao importados nesse caso).
 
 Como o PDI entrega os dados (codigo pronto, nao precisa mexer):
   1. stages/analysis.py  decide quais componentes sao AMONTOADO (area >= analysis.cluster_ratio x a de um verme)
@@ -89,21 +89,62 @@ def f1_from(counts: dict) -> float:
 
 
 # --------------------------------------------------------------------------------------
-# A rede (A IMPLEMENTAR)
+# A rede (Mask R-CNN do colega; `train` continua a cargo de tools/train_maskrcnn.ps1)
 # --------------------------------------------------------------------------------------
 
 class ClusterSeparator:
-    """Separa um recorte de amontoado em mascaras por verme. `refine.kind=cnn` instancia esta classe com
-    `refine.weights`, `refine.threshold` e `refine.min_area` (ver celegans_seg/config.py, RefineCfg)."""
+    """Separa um recorte de amontoado em mascaras por verme usando a Mask R-CNN do colega (submodule `cnn/`, treinada
+    por `tools/train_maskrcnn.ps1`). `refine.kind=cnn` instancia esta classe com `refine.weights`, `refine.threshold`,
+    `refine.min_area` e `refine.score_thr` (ver celegans_seg/config.py, RefineCfg).
 
-    def __init__(self, weights: str | Path | None = None, threshold: float = 0.5, min_area: int = 20):
-        self.weights, self.threshold, self.min_area = weights, threshold, min_area
+    A rede foi treinada em quadros inteiros (912x736, ampliados ~1,09x pelo torchvision). Para o recorte (192x192) ter a
+    mesma escala dos vermes, o lado menor e levado a `round(S * TRAIN_SCALE)` px em vez dos 800 px padrao."""
+
+    TRAIN_SCALE = 800 / 736
+
+    def __init__(self, weights: str | Path | None = None, threshold: float = 0.5, min_area: int = 20,
+                 score_thr: float = 0.3):
+        self.weights, self.threshold, self.min_area, self.score_thr = weights, threshold, min_area, score_thr
+        self._model = None
+        self._device = None
+        self._mask_channel = False  # checkpoints de tools/cluster_train.py recebem a mascara do amontoado no 3o canal
+        self._scale = self.TRAIN_SCALE
+
+    def _load(self, size: int):
+        import torch
+        import torchvision
+
+        if self.weights is None or not Path(self.weights).is_file():
+            raise NotImplementedError(f"sem pesos da CNN (refine.weights={self.weights!r}); treine com "
+                                      "tools/train_maskrcnn.ps1 e aponte refine.weights para o checkpoint.pth")
+        if self._model is None:
+            self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            m = torchvision.models.detection.maskrcnn_resnet50_fpn(
+                weights=None, weights_backbone=None, num_classes=2, box_score_thresh=self.score_thr)
+            ck = torch.load(self.weights, map_location="cpu", weights_only=True)
+            m.load_state_dict(ck["model"])
+            self._mask_channel = bool(ck.get("mask_channel", False))
+            self._scale = float(ck.get("scale", self.TRAIN_SCALE))
+            self._model = m.to(self._device).eval()
+        self._model.transform.min_size = (int(round(size * self._scale)),)
+        self._model.transform.max_size = 1333
+        return self._model
 
     def predict_masks(self, patch: dict) -> list[np.ndarray]:
-        """A IMPLEMENTAR. Recebe o recorte (ver o docstring do modulo) e devolve uma lista de mascaras booleanas
-        (S, S), uma por verme, dentro de `patch["mask"]` (podem se sobrepor). Lista vazia ou com 1 mascara = nao
-        separou (o amontoado fica como estava)."""
-        raise NotImplementedError("CNN ainda nao implementada: implemente ClusterSeparator.predict_masks em celegans_seg/cnn.py")
+        """Roda a Mask R-CNN no recorte (cinza replicado em 3 canais; ou [cinza, cinza, mascara do amontoado]) e devolve uma mascara booleana (S, S) por verme
+        detectado (score >= `score_thr`), ja restrita a `patch["mask"]` (podem se sobrepor). Lista vazia ou com 1
+        mascara = nao separou (o amontoado fica como estava)."""
+        import torch
+
+        img = patch["image"]
+        model = self._load(img.shape[0])
+        g = torch.from_numpy(img).float().div(255.0)
+        third = torch.from_numpy(patch["mask"].astype(np.float32)) if self._mask_channel else g
+        x = torch.stack([g, g, third]).to(self._device)
+        with torch.no_grad():
+            out = model([x])[0]
+        masks = (out["masks"][:, 0] >= self.threshold).cpu().numpy()
+        return [m & patch["mask"] for m in masks]
 
     def separate(self, patch: dict) -> np.ndarray:
         """Mapa de rotulos (S, S) int32: 0 = fora do amontoado, 1..n = verme. E o que `CNNRefiner` usa (implementado

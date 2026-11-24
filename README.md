@@ -76,7 +76,8 @@ flowchart TD
     H -- "verme isolado" --> O
     H -- "amontoado" --> R["<b>8. Refine</b><br/>kind = none (padrão) ou cnn<br/>patch_size = 192"]
     R --> O(["<b>instâncias</b>: 1 máscara por verme<br/>(amontoado = 1 instância 'cluster')"])
-    O --> S["<b>9. Evaluate / Visualize</b><br/>IoU, Dice, F1 · overlay · metrics.csv"]
+    O --> T["<b>9. Timeline</b> · Aula 05<br/>liga máscaras de quadros vizinhos por SSIM<br/>min_ssim = 0.35 · max_dist = 60 px · max_gap = 2"]
+    T --> S["<b>10. Evaluate / Visualize</b><br/>IoU, Dice, F1 · overlay · metrics.csv"]
 ```
 
 | Estágio | O que faz | Slide | Código |
@@ -90,6 +91,7 @@ flowchart TD
 | ComponentAnalysis | área, esqueleto, espessura; **amontoado = área ≥ 1,5 × a de um verme**; descarta o que não tem forma de verme (largura média < 5 px = sujeira, > 40 px = mancha) | Aulas 08 e 01c | `stages/analysis.py`, `ops.thin`, `ops.distance_transform` |
 | Instances | cada componente vira uma instância (`single` ou `cluster`) | — | `stages/instances.py` |
 | Refine | `none` (padrão) ou `cnn` (gancho) | — | `stages/refine.py`, `celegans_seg/cnn.py` |
+| Timeline | linha do tempo de cada verme: liga as máscaras de quadros vizinhos por SSIM (forma e sobreposição; MSE/PSNR no CSV), atribuição húngara, tolera 2 quadros sem aparecer; grava `timeline.csv`, `tracks.csv`, `timeline.png` | Aula 05 (pág. 18-22) | `stages/timeline.py`, `ops.ssim` |
 | Evaluate / Export / Visualize | métricas, recortes de amontoados, imagens | — | `stages/evaluate.py`, `export.py`, `viz.py` |
 
 Convenção de citação nos docstrings: `[Aula NN, pág. P]` = página **P do PDF** da aula NN. O que cada aula contribui está em [`CONTEUDO_UTILIZADO.md`](CONTEUDO_UTILIZADO.md). Fora dos slides: fundo temporal, ponte/crescimento da máscara, filtro de forma, métricas Dice/IoU.

@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acompanhar verme</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2230; --mut:#667085; --line:#e3e6ec; --acc:#2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151c; --card:#1b2029; --ink:#e8ebf2; --mut:#98a2b3; --line:#2a3140; --acc:#6ea0ff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.4 system-ui, Segoe UI, sans-serif; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line); background:var(--card); display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; }
+  header span { color:var(--mut); }
+  main { display:grid; grid-template-columns: minmax(0,1fr) 340px; gap:12px; padding:12px 16px; align-items:start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  /* A imagem nunca passa da largura do cartao nem da altura da janela (sobra espaco para controles e legenda). */
+  .stage { display:flex; justify-content:center; line-height:0; background:#000; border-radius:6px; }
+  canvas#view { touch-action:none; width:auto; height:auto; max-width:100%; max-height:max(220px, calc(100vh - 290px)); max-height:max(220px, calc(100dvh - 290px)); cursor:crosshair; display:block; }
+  canvas#view.pan { cursor:grabbing; }
+  .side { position:sticky; top:12px; max-height:calc(100vh - 24px); overflow-y:auto; }
+  @media (max-width: 900px) { .side { position:static; max-height:none; overflow:visible; } }
+  @media (max-width: 520px) { main { padding:8px; gap:8px; } .ctrl { gap:6px; } }
+  .ctrl { display:flex; gap:8px; align-items:center; margin-top:10px; line-height:1.4; flex-wrap:wrap; }
+  .ctrl input[type=range] { flex:1; min-width:140px; }
+  button { background:var(--card); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--acc); }
+  button.on { background:var(--acc); color:#fff; border-color:var(--acc); }
+  select { background:var(--card); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:5px; font:inherit; max-width:100%; }
+  h2 { font-size:13px; margin:0 0 8px; color:var(--mut); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+  dl { margin:0; display:grid; grid-template-columns: 1fr auto; gap:3px 10px; }
+  dt { color:var(--mut); } dd { margin:0; text-align:right; font-variant-numeric: tabular-nums; }
+  .side { display:flex; flex-direction:column; gap:12px; min-width:0; }
+  .chip { display:inline-block; width:11px; height:11px; border-radius:3px; vertical-align:-1px; margin-right:6px; }
+  .hint { color:var(--mut); font-size:12px; margin-top:6px; }
+  
+  .legend { display:flex; gap:12px; flex-wrap:wrap; color:var(--mut); font-size:12px; margin-top:8px; line-height:1.4; }
+  .ausente { color:#b42318; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <div class="stage"><canvas id="view"></canvas></div>
+    <div class="ctrl">
+      <button id="play">▶ Reproduzir</button>
+      <button id="prev">◀</button>
+      <canvas id="tl" title="Linha do tempo: o trecho amarelo mostra onde o verme escolhido aparece" style="flex:1;min-width:140px;height:30px;cursor:pointer;touch-action:none"></canvas>
+      <button id="next">▶</button>
+      <span id="fidx" style="min-width:90px;text-align:right"></span>
+    </div>
+    <div class="ctrl">
+      <label>Verme: <select id="pick"></select></label>
+      <button id="clear">Limpar seleção</button>
+      <label><input type="checkbox" id="others" checked> outros vermes</label>
+      <label><input type="checkbox" id="follow"> seguir o verme</label>
+      <label>vel. <select id="speed"><option value="200">lenta</option><option value="100" selected>normal</option><option value="40">rápida</option></select></label>
+    </div>
+    <div class="legend">
+      <span><span class="chip" style="background:#ffd400"></span>verme escolhido</span>
+      <span><span class="chip" style="background:#ff3b30"></span>amontoado que a CNN não separou</span>
+      <span><span class="chip" style="border:2px dashed currentColor;background:none"></span>caixa tracejada = vermes separados pela CNN de um mesmo amontoado</span>
+      <span><span class="chip" style="background:#34c759;opacity:.6"></span>outros vermes</span>
+    </div>
+  </section>
+  <aside class="side">
+    <section class="card"><h2>Verme escolhido</h2><div id="worm"><span class="hint">Nenhum. Clique num verme na imagem.</span></div>
+    </section>
+    <section class="card"><h2>Imagem atual</h2><div id="frame"></div></section>
+  </aside>
+</main>
+<script src="data.js"></script>
+<script>
+const F = DATA.frames, W = DATA.width, H = DATA.height;
+const $ = id => document.getElementById(id);
+const view = $("view"), ctx = view.getContext("2d");
+view.width = W; view.height = H;
+const layer = document.createElement("canvas"); layer.width = W; layer.height = H;
+document.title = "Acompanhar verme" + (DATA.refine === "cnn" ? " · " + DATA.weights : " · sem CNN");
+
+let cur = 0, sel = null, timer = null;
+const imgs = {}, labs = {};
+function colorOf(t) { // razão áurea, como no pipeline
+  const h = (t * 0.61803398875) % 1, s = .85, v = 1, i = Math.floor(h * 6), f = h * 6 - i;
+  const p = v * (1 - s), q = v * (1 - f * s), u = v * (1 - (1 - f) * s);
+  const [r, g, b] = [[v,u,p],[q,v,p],[p,v,u],[p,q,v],[u,p,v],[v,p,q]][i % 6];
+  return [r * 255 | 0, g * 255 | 0, b * 255 | 0];
+}
+function loadImg(src) { return new Promise(res => { const im = new Image(); im.onload = () => res(im); im.src = src; }); }
+async function frameData(k) {
+  if (!imgs[k]) imgs[k] = loadImg("frames/" + String(k).padStart(5, "0") + ".jpg");
+  if (!labs[k]) labs[k] = loadImg(F[k].label).then(im => {
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const x = c.getContext("2d"); x.drawImage(im, 0, 0); return x.getImageData(0, 0, W, H).data;
+  });
+  return [await imgs[k], await labs[k]];
+}
+const byTrack = k => Object.fromEntries(F[k].instances.map(i => [i.track, i]));
+const fmt = (v, d = 3) => v == null ? "–" : (typeof v === "number" ? (Number.isInteger(v) ? v : v.toFixed(d)) : v);
+
+// Zoom: V = janela visivel, em pixels do quadro (x, y, largura); a altura segue a proporcao do quadro.
+const V = { x: 0, y: 0, w: W };
+const vh = () => V.w * H / W;
+function clampV() {
+  V.w = Math.max(48, Math.min(W, V.w));
+  V.x = Math.max(0, Math.min(W - V.w, V.x)); V.y = Math.max(0, Math.min(H - vh(), V.y));
+}
+const KK = () => W / V.w;  // pixels da tela por pixel do quadro
+function zoomAt(fx, fy, factor) {  // (fx, fy) em pixels do quadro: o ponto fica parado
+  const nw = Math.max(48, Math.min(W, V.w / factor)), r = nw / V.w;
+  V.x = fx - (fx - V.x) * r; V.y = fy - (fy - V.y) * r; V.w = nw; clampV(); draw();
+}
+function fitAll() { V.x = 0; V.y = 0; V.w = W; draw(); }
+function followWorm() {
+  const i = sel != null && byTrack(cur)[sel];
+  if (!i || !$("follow").checked) return;
+  V.x = i.cx - V.w / 2; V.y = i.cy - vh() / 2; clampV();
+}
+let layerKey = "";
+let token = 0;
+async function draw() {
+  const my = ++token, k = cur;
+  const [im, lab] = await frameData(k);
+  if (my !== token) return;
+  // A mascara e pintada numa camada a parte (RGBA) e colada sobre o quadro. Nao se le o pixel do quadro: em file://
+  // o navegador marca o canvas como "contaminado" e getImageData falharia (e nenhuma mascara apareceria).
+  const showOthers = $("others").checked, key = k + "|" + sel + "|" + showOthers;
+  if (key !== layerKey) {
+  layerKey = key;
+  const o = new ImageData(W, H), d = o.data;
+  for (let p = 0, n = W * H; p < n; p++) {
+    const t = lab[p * 4] | (lab[p * 4 + 1] << 8);
+    if (!t) continue;
+    const src = lab[p * 4 + 2], isSel = t === sel;
+    if (!isSel && !showOthers) continue;
+    const c = isSel ? [255, 212, 0] : (src === 1 ? [255, 59, 48] : colorOf(t));
+    d[p * 4] = c[0]; d[p * 4 + 1] = c[1]; d[p * 4 + 2] = c[2];
+    d[p * 4 + 3] = isSel ? 190 : (src === 1 ? 115 : 90);
+  }
+  layer.getContext("2d").putImageData(o, 0, 0);
+  }
+  followWorm(); clampV();
+  ctx.imageSmoothingEnabled = KK() < 3;  // muito aproximado: pixels nitidos
+  ctx.drawImage(im, V.x, V.y, V.w, vh(), 0, 0, W, H);
+  ctx.drawImage(layer, V.x, V.y, V.w, vh(), 0, 0, W, H);
+  ctx.save(); ctx.setTransform(KK(), 0, 0, KK(), -V.x * KK(), -V.y * KK());  // dai em diante: coordenadas do quadro
+  groupBoxes(k);
+  if (sel != null) overlaySel(k);
+  ctx.restore();
+  panels();
+}
+// Vermes separados pela CNN que vieram do mesmo amontoado: caixa tracejada em volta do grupo
+function groups(k) {
+  const g = {};
+  for (const i of F[k].instances) if (i.source === "cnn") (g[i.group] = g[i.group] || []).push(i);
+  return g;
+}
+function groupBoxes(k) {
+  if (!$("others").checked && !Object.values(groups(k)).some(a => a.some(i => i.track === sel))) return;
+  const q = n => n / KK();
+  ctx.save(); ctx.setLineDash([q(8), q(5)]); ctx.lineWidth = q(2); ctx.font = "bold " + q(14) + "px system-ui";
+  for (const a of Object.values(groups(k))) {
+    const y0 = Math.min(...a.map(i => i.bbox[0])) - 6, x0 = Math.min(...a.map(i => i.bbox[1])) - 6;
+    const y1 = Math.max(...a.map(i => i.bbox[2])) + 6, x1 = Math.max(...a.map(i => i.bbox[3])) + 6;
+    const mine = a.some(i => i.track === sel);
+    ctx.strokeStyle = mine ? "#ffd400" : "#ffffff"; ctx.fillStyle = ctx.strokeStyle;
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.fillText("amontoado · " + a.length + " vermes", x0, y0 - q(5));
+  }
+  ctx.restore();
+}
+function overlaySel(k) {
+  const i = byTrack(k)[sel];
+  if (i) { const [y0, x0, y1, x1] = i.bbox; const q = n => n / KK(); ctx.strokeStyle = "#ffd400"; ctx.lineWidth = q(2); ctx.strokeRect(x0 - 3, y0 - 3, x1 - x0 + 6, y1 - y0 + 6);
+    ctx.font = "bold " + q(16) + "px system-ui"; ctx.fillStyle = "#ffd400"; ctx.fillText("#" + sel, x0, y0 - q(8)); }
+}
+function panels() {
+  const f = F[cur], ins = f.instances, m = f.metrics;
+  $("fidx").textContent = "quadro " + cur + " (" + f.name + ")";
+  drawTL();
+  let h = "<dl><dt>Vermes na imagem</dt><dd>" + ins.length + "</dd>" +
+    "<dt>Amontoados não separados</dt><dd>" + ins.filter(i => i.source === "cluster").length + "</dd>" +
+    "<dt>Separados pela CNN</dt><dd>" + ins.filter(i => i.source === "cnn").length + "</dd>";
+  if (DATA.has_gt) h += "<dt>Previstos × gabarito</dt><dd>" + fmt(m.n_pred) + " × " + fmt(m.n_gt) + "</dd>" +
+    "<dt>Precisão (IoU ≥ 0,5)</dt><dd>" + fmt(m.precision) + "</dd>";
+  $("frame").innerHTML = h + "</dl>";
+  const pk = $("pick"), want = [...ins].sort((a, b) => a.track - b.track);
+  pk.innerHTML = "<option value=''>(nenhum)</option>" + want.map(i => "<option value='" + i.track + "'>#" + i.track + (i.source === "cluster" ? " (amontoado)" : "") + "</option>").join("");
+  if (sel != null && !want.some(i => i.track === sel)) pk.innerHTML += "<option value='" + sel + "' selected>#" + sel + " (ausente)</option>";
+  pk.value = sel == null ? "" : String(sel);
+  wormPanel();
+}
+function track(t) { const r = []; F.forEach((f, k) => { const i = f.instances.find(x => x.track === t); if (i) r.push([k, i]); }); return r; }
+function wormPanel() {
+  const box = $("worm");
+  if (sel == null) { box.innerHTML = "<span class='hint'>Nenhum. Clique num verme na imagem ou escolha na lista.</span>"; return; }
+  const tr = track(sel), i = byTrack(cur)[sel];
+  let h = "<dl><dt>Trilha</dt><dd>#" + sel + "</dd><dt>Visto em</dt><dd>quadros " + tr[0][0] + " a " + tr[tr.length - 1][0] + " (" + tr.length + ")</dd>";
+  if (i) {
+    h += "<dt>Origem</dt><dd>" + ({single:"verme isolado", cluster:"amontoado (não separado)", cnn:"separado pela CNN"})[i.source] + "</dd>" +
+      "<dt>Amontoado</dt><dd>" + (i.source === "cnn" ? "parte de um com " + groups(cur)[i.group].length + " vermes" : i.source === "cluster" ? "sim, não separado" : "não") + "</dd>" +
+      "<dt>SSIM com o quadro anterior</dt><dd>" + fmt(i.ssim) + "</dd>";
+  } else h += "<dt>Neste quadro</dt><dd class='ausente'>ausente</dd>";
+  box.innerHTML = h + "</dl>";
+}
+// Linha do tempo do player: trecho amarelo = quadros em que o verme escolhido aparece; traco = quadro atual
+function drawTL() {
+  const c = $("tl"), dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (!w) return;
+  c.width = w * dpr; c.height = h * dpr;
+  const x = c.getContext("2d"); x.scale(dpr, dpr); x.clearRect(0, 0, w, h);
+  const css = getComputedStyle(document.body), ink = css.getPropertyValue("--ink").trim(), line = css.getPropertyValue("--line").trim();
+  const y0 = 7, bh = h - 14, fw = Math.max(w / F.length, 1);
+  x.fillStyle = line; x.fillRect(0, y0, w, bh);
+  if (sel != null) {
+    x.fillStyle = "#ffd400";
+    F.forEach((f, k) => { if (f.instances.some(i => i.track === sel)) x.fillRect(w * k / F.length, y0, fw, bh); });
+  }
+  x.fillStyle = ink; x.fillRect(Math.min(w - 3, w * (cur + 0.5) / F.length - 1.5), 1, 3, h - 2);
+}
+function go(k) { cur = Math.max(0, Math.min(F.length - 1, k)); draw(); }
+function setSel(t) { sel = t; draw(); }
+function toImg(e) {
+  const r = view.getBoundingClientRect();
+  return [V.x + (e.clientX - r.left) / r.width * V.w, V.y + (e.clientY - r.top) / r.height * vh()];
+}
+async function pickAt(x, y) {
+  x = Math.round(x); y = Math.round(y);
+  const [, lab] = await frameData(cur), p = (y * W + x) * 4, t = x >= 0 && y >= 0 && x < W && y < H ? lab[p] | (lab[p + 1] << 8) : 0;
+  if (t) return setSel(t);
+  let best = null, bd = 30 / KK(); for (const i of F[cur].instances) { const d = Math.hypot(i.cx - x, i.cy - y); if (d < bd) { bd = d; best = i.track; } }
+  setSel(best);
+}
+let drag = null;
+const box = document.createElement("div");  // retangulo do Shift + arrastar
+box.style.cssText = "position:fixed;border:2px solid #ffd400;background:rgba(255,212,0,.15);pointer-events:none;display:none;z-index:9";
+document.body.appendChild(box);
+view.addEventListener("pointerdown", e => { view.setPointerCapture(e.pointerId); drag = { sx: e.clientX, sy: e.clientY, x: V.x, y: V.y, moved: false, zoomBox: e.shiftKey }; });
+view.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+  if (Math.hypot(dx, dy) > 4) drag.moved = true;
+  if (!drag.moved) return;
+  if (drag.zoomBox) {
+    Object.assign(box.style, { display: "block", left: Math.min(drag.sx, e.clientX) + "px", top: Math.min(drag.sy, e.clientY) + "px", width: Math.abs(dx) + "px", height: Math.abs(dy) + "px" });
+  } else {
+    const r = view.getBoundingClientRect(); view.classList.add("pan");
+    V.x = drag.x - dx / r.width * V.w; V.y = drag.y - dy / r.height * vh(); clampV(); draw();
+  }
+});
+view.addEventListener("pointerup", e => {
+  if (!drag) return;
+  const d = drag; drag = null; box.style.display = "none"; view.classList.remove("pan");
+  if (!d.moved) { const [x, y] = toImg(e); return pickAt(x, y); }
+  if (d.zoomBox) {
+    const r = view.getBoundingClientRect(), fx = u => V.x + (u - r.left) / r.width * V.w, fy = u => V.y + (u - r.top) / r.height * vh();
+    const x0 = fx(Math.min(d.sx, e.clientX)), x1 = fx(Math.max(d.sx, e.clientX)), y0 = fy(Math.min(d.sy, e.clientY)), y1 = fy(Math.max(d.sy, e.clientY));
+    V.w = Math.max(48, x1 - x0, (y1 - y0) * W / H); V.x = (x0 + x1) / 2 - V.w / 2; V.y = (y0 + y1) / 2 - vh() / 2; clampV(); draw();
+  }
+});
+view.addEventListener("wheel", e => { e.preventDefault(); const [x, y] = toImg(e); zoomAt(x, y, e.deltaY < 0 ? 1.2 : 1 / 1.2); }, { passive: false });
+view.addEventListener("dblclick", fitAll);
+$("follow").onchange = draw;
+$("pick").onchange = e => setSel(e.target.value ? +e.target.value : null);
+$("clear").onclick = () => setSel(null);
+let scrub = false;
+const seek = e => { const r = $("tl").getBoundingClientRect(); go(Math.floor(Math.max(0, Math.min(0.9999, (e.clientX - r.left) / r.width)) * F.length)); };
+$("tl").addEventListener("pointerdown", e => { scrub = true; $("tl").setPointerCapture(e.pointerId); seek(e); });
+$("tl").addEventListener("pointermove", e => { if (scrub) seek(e); });
+$("tl").addEventListener("pointerup", () => { scrub = false; });
+$("prev").onclick = () => go(cur - 1); $("next").onclick = () => go(cur + 1);
+$("others").onchange = draw;
+function play() {
+  if (timer) { clearInterval(timer); timer = null; $("play").textContent = "▶ Reproduzir"; $("play").classList.remove("on"); return; }
+  if (cur >= F.length - 1) go(0);  // no fim do video, reproduzir recomeca
+  $("play").textContent = "⏸ Pausar"; $("play").classList.add("on");
+  const step = () => { if (cur >= F.length - 1) return play(); go(cur + 1); };
+  timer = setInterval(step, +$("speed").value);
+}
+$("speed").onchange = () => { if (timer) { play(); play(); } };
+$("play").onclick = play;
+addEventListener("keydown", e => {
+  if (e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowRight") go(cur + 1); else if (e.key === "ArrowLeft") go(cur - 1); else if (e.key === " ") { e.preventDefault(); play(); }
+});
+addEventListener("resize", drawTL);
+draw();
+</script>
+</body>
+</html>

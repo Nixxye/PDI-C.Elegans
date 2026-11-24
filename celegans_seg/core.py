@@ -42,6 +42,7 @@ class Instance:
     area: int
     centroid: tuple
     ambiguous: bool = False  # veio de um amontoado: separacao menos confiavel
+    track: int = 0  # id do verme na linha do tempo (estagio `timeline`); 0 = nao rastreado
 
 
 @dataclass

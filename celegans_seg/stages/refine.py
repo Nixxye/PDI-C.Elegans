@@ -40,8 +40,9 @@ class CNNRefiner(Stage):
 
     Monta o mesmo recorte que `export.py` grava (imagem, sinal, mascara do amontoado), pergunta a
     `cnn.ClusterSeparator.separate` e devolve as instancias `source="cnn"` (marcadas `ambiguous`: a separacao dentro de
-    um amontoado e menos confiavel que a de um verme isolado). Se a CNN nao achar >= 2 vermes, ou o amontoado nao couber
-    no recorte (`export.patch_size`), ele fica como estava.
+    um amontoado e menos confiavel que a de um verme isolado). Se a CNN nao achar >= 2 vermes, ou o amontoado precisar de
+    uma janela maior que `refine.max_window`, ele fica como estava. Amontoados que nao cabem em `export.patch_size`
+    usam uma janela maior (ate `max_window`).
     """
 
     name = "refine"
@@ -51,7 +52,7 @@ class CNNRefiner(Stage):
         from ..cnn import ClusterSeparator  # esqueleto em celegans_seg/cnn.py (a rede e implementada la)
 
         r = cfg.refine
-        self.sep = ClusterSeparator(r.weights, threshold=r.threshold, min_area=r.min_area)
+        self.sep = ClusterSeparator(r.weights, threshold=r.threshold, min_area=r.min_area, score_thr=r.score_thr)
 
     def process(self, ctx):
         clusters = [i for i in ctx.instances if i.source == "cluster"]
@@ -63,10 +64,17 @@ class CNNRefiner(Stage):
         for inst in clusters:
             m_full = ctx.inst_labels == inst.id
             cy, cx = (int(round(v)) for v in inst.centroid)
-            mask = crop_center(m_full, cy, cx, S)
+            # janela = patch_size, ou maior se o amontoado nao cabe (a rede ajusta a escala pelo tamanho da janela,
+            # entao o verme continua com o tamanho que ela viu no treino)
+            ys0, xs0 = np.nonzero(m_full)
+            reach = max(cy - ys0.min(), ys0.max() - cy, cx - xs0.min(), xs0.max() - cx) + 1
+            W = max(S, 2 * int(reach) + 16)
+            if W > self.cfg.refine.max_window:
+                continue
+            mask = crop_center(m_full, cy, cx, W)
             if mask.sum() != m_full.sum():  # parte do amontoado ficou fora da janela
                 continue
-            lab = self.sep.separate(dict(image=crop_center(ctx.raw, cy, cx, S), signal=crop_center(s8, cy, cx, S),
+            lab = self.sep.separate(dict(image=crop_center(ctx.raw, cy, cx, W), signal=crop_center(s8, cy, cx, W),
                                          mask=mask))
             if int(lab.max()) < 2:
                 continue

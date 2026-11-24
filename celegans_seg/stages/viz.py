@@ -40,7 +40,7 @@ class Visualizer(Stage):
             edge = m & ~ndi.binary_erosion(m)
             if inst.ambiguous:  # veio de amontoado: contorno mais grosso
                 edge = ndi.binary_dilation(edge) & m
-            rgb[edge] = CLUSTER_COLOR if inst.source == "cluster" else id_color(inst.id)
+            rgb[edge] = CLUSTER_COLOR if inst.source == "cluster" else id_color(inst.track or inst.id)
         img = Image.fromarray(rgb)
         d = ImageDraw.Draw(img)
         for inst in ctx.instances:

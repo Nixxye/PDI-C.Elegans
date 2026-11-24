@@ -24,6 +24,7 @@ labeling:    {min_area: 150, bridge_gap: 8, bridge_min_area: 150}   # min_area: 
 analysis:    {cluster_ratio: 1.5, ref_area: 0.0}  # ref_area 0 = estimada dos dados
 refine:      {kind: none}   # none = so PDI (padrao). cnn = gancho para a CNN do colega (celegans_seg/cnn.py; hoje levanta NotImplementedError)
 export:      {patch_size: 192, only_clusters: true}   # 192: cabem os amontoados grandes (128 deixava ~19 % de fora); a CNN usa o mesmo tamanho
+timeline:    {window: 128, max_dist: 60, min_ssim: 0.35, dist_weight: 0.3, max_gap: 2, min_track_len: 3}  # linha do tempo de cada verme: liga mascaras de quadros vizinhos por SSIM (Aula 05, pag. 18-22)
 
 output:
   dir: runs/last
@@ -31,4 +32,4 @@ output:
 # Ordem dos estagios. So PDI por padrao: sem "export" (que grava os recortes e cluster_masks/ para a CNN).
 # Para a CNN: acrescente "export" aqui (ou use tools/build_cnn_dataset.py) e use refine.kind=cnn.
 stages: [normalize, denoise, background, threshold, morphology, labeling,
-         analysis, instances, refine, evaluate, visualize]
+         analysis, instances, refine, timeline, evaluate, visualize]

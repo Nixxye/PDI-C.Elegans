@@ -262,3 +262,36 @@ def skeleton_stats(skel: np.ndarray) -> tuple[int, int, int]:
     nb = ndi.convolve(skel.astype(np.int8), np.ones((3, 3), np.int8), mode="constant") - 1
     nb = nb * skel
     return int(skel.sum()), int((nb == 1).sum()), int((nb >= 3).sum())
+
+
+# --------------------------------------------------------------------------------------
+# Similaridade entre imagens  (Aula 05, pag. 18-22)
+# --------------------------------------------------------------------------------------
+
+
+def mse(a: np.ndarray, b: np.ndarray) -> float:
+    """Erro quadratico medio entre duas imagens de mesmo tamanho.  [Aula 05, pag. 18]"""
+    return float(np.mean((a.astype(np.float64) - b.astype(np.float64)) ** 2))
+
+
+def psnr(a: np.ndarray, b: np.ndarray, peak: float = 1.0) -> float:
+    """PSNR = 10 log10(peak^2 / MSE), em dB (inf se as imagens forem iguais).  [Aula 05, pag. 19]"""
+    e = mse(a, b)
+    return float("inf") if e == 0 else float(10 * np.log10(peak**2 / e))
+
+
+def ssim(a: np.ndarray, b: np.ndarray, sigma: float = 1.5, roi: np.ndarray | None = None, peak: float = 1.0) -> float:
+    """SSIM medio (Wang et al.) entre duas imagens, janela gaussiana.  [Aula 05, pag. 20-22]
+
+    SSIM = (2 ma mb + C1)(2 cov + C2) / ((ma^2 + mb^2 + C1)(va + vb + C2)), com C1 = (0,01 L)^2 e C2 = (0,03 L)^2.
+    `roi` (bool) limita a media aos pixels de interesse: em mascaras o fundo vazio e identico nas duas e daria
+    SSIM = 1, escondendo a diferenca entre os vermes."""
+    a, b = a.astype(np.float64), b.astype(np.float64)
+    c1, c2 = (0.01 * peak) ** 2, (0.03 * peak) ** 2
+    g = lambda x: ndi.gaussian_filter(x, sigma, truncate=3.5)  # noqa: E731
+    ma, mb = g(a), g(b)
+    va, vb, cov = g(a * a) - ma * ma, g(b * b) - mb * mb, g(a * b) - ma * mb
+    smap = ((2 * ma * mb + c1) * (2 * cov + c2)) / ((ma * ma + mb * mb + c1) * (va + vb + c2))
+    if roi is not None and roi.any():
+        smap = smap[roi]
+    return float(smap.mean())

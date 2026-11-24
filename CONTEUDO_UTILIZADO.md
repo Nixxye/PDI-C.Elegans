@@ -57,7 +57,7 @@ O problema tem duas partes: **(1)** separar vermes do fundo e **(2)** separar ve
 - *Equivalente:* `imbilatfilt`.
 
 **Métricas de qualidade — MSE, PSNR, SSIM (pág. 18-22).** Comparam duas imagens com referência.
-- *No projeto:* **não usadas** diretamente. Para segmentação a métrica adequada é Dice/IoU (ver "Fora dos slides"). PSNR/SSIM ficam como opção para comparar pré-processamentos.
+- *No projeto (`ops.mse/psnr/ssim`, `stages/timeline.py`):* **usadas na linha do tempo**: o SSIM entre as máscaras de quadros vizinhos decide se são o mesmo verme (MSE e PSNR vão para o `timeline.csv`). Para avaliar a segmentação em si continua valendo Dice/IoU (ver "Fora dos slides").
 
 ## Aula 07 — Domínio da frequência
 

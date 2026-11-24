@@ -99,9 +99,21 @@ class AnalysisCfg:
 @dataclass
 class RefineCfg:
     kind: str = "none"  # none | cnn (separa os amontoados com a CNN de celegans_seg/cnn.py)
-    weights: str = "models/cluster_cnn.pt"
-    threshold: float = 0.5  # probabilidade minima do canal para entrar na mascara do verme
+    weights: str = "runs/cnn_train/checkpoint.pth"  # checkpoint da Mask R-CNN (tools/train_maskrcnn.ps1)
+    score_thr: float = 0.3  # confianca minima da deteccao do verme
+    threshold: float = 0.5  # limiar de pixel da mascara prevista
     min_area: int = 20  # canais com menos pixels que isso sao descartados
+    max_window: int = 448  # maior janela (px) para amontoados que nao cabem em export.patch_size; acima disso fica sem separar
+
+
+@dataclass
+class TimelineCfg:
+    window: int = 128  # lado (px) do recorte centrado no centroide de cada mascara, onde o SSIM e calculado
+    max_dist: float = 60.0  # px: so compara mascaras com centroides a ate isto (x quadros sem aparecer + 1)
+    min_ssim: float = 0.35  # SSIM minimo para ligar duas mascaras ao mesmo verme
+    dist_weight: float = 0.3  # peso da distancia no custo: custo = -(SSIM - dist_weight * d / max_dist)
+    max_gap: int = 2  # quadros seguidos que um verme pode sumir (oclusao, falha) e ainda manter o id
+    min_track_len: int = 3  # trilhas mais curtas que isso nao entram na figura da linha do tempo
 
 
 @dataclass
@@ -126,7 +138,7 @@ class OutputCfg:
 
 DEFAULT_STAGES = [
     "normalize", "denoise", "background", "threshold", "morphology", "labeling",
-    "analysis", "instances", "refine", "evaluate", "export", "visualize",
+    "analysis", "instances", "refine", "timeline", "evaluate", "export", "visualize",
 ]
 
 
@@ -141,6 +153,7 @@ class Config:
     labeling: LabelCfg = field(default_factory=LabelCfg)
     analysis: AnalysisCfg = field(default_factory=AnalysisCfg)
     refine: RefineCfg = field(default_factory=RefineCfg)
+    timeline: TimelineCfg = field(default_factory=TimelineCfg)
     export: ExportCfg = field(default_factory=ExportCfg)
     viz: VizCfg = field(default_factory=VizCfg)
     output: OutputCfg = field(default_factory=OutputCfg)

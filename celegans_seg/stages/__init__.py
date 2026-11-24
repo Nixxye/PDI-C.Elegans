@@ -10,6 +10,7 @@ from .instances import InstanceBuilder
 from .preprocess import BackgroundSubtraction, Denoise, Normalize
 from .refine import CNNRefiner, NullRefiner
 from .segment import Labeling, Morphology, Threshold
+from .timeline import Timeline
 from .viz import Visualizer
 
 REGISTRY = {
@@ -22,6 +23,7 @@ REGISTRY = {
     "analysis": ComponentAnalysis,
     "instances": InstanceBuilder,
     "refine": lambda cfg, env: CNNRefiner(cfg, env) if cfg.refine.kind == "cnn" else NullRefiner(cfg, env),
+    "timeline": Timeline,
     "evaluate": Evaluate,
     "export": ClusterPatchExporter,
     "visualize": Visualizer,

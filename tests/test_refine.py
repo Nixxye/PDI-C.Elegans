@@ -56,8 +56,9 @@ class TestRefine(unittest.TestCase):
         self.assertEqual(len(np.unique(ctx.inst_labels[ctx.inst_labels > 0])), 2)
         self.assertEqual(int((ctx.inst_labels > 0).sum()), 30 * 120)  # nenhum pixel do amontoado se perde
 
-    def test_esqueleto_da_rede_avisa_que_falta_implementar(self):
+    def test_sem_pesos_a_rede_avisa(self):
         cfg = load_config(None)
+        cfg.refine.weights = None
         refiner = CNNRefiner(cfg, Env(source=None, masks=None, cfg=cfg, out_dir=Path(".")))
         with self.assertRaises(NotImplementedError):
             refiner.process(cluster_context())

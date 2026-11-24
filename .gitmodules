@@ -1,0 +1,4 @@
+[submodule "cnn"]
+	path = cnn
+	url = https://github.com/Aguiaremer/C.elegans-maskRcnn.git
+	branch = master
