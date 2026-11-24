@@ -1,12 +1,4 @@
-"""Nucleo do pipeline: contexto de quadro, estagio base e orquestrador.
-
-Estilo de pipeline: cada operacao e um `Stage` com `process(ctx)`. O `FrameContext` carrega o
-quadro e tudo que os estagios vao produzindo. Estagios que precisam olhar a sequencia inteira
-antes (fundo, area de referencia) implementam `fit(samples)`.
-
-Esta organizacao reflete o diagrama de tres niveis da [Aula 06, pag. 1-3 de Parte 1]:
-baixo nivel (imagem -> imagem), medio nivel (extracao de atributos) e alto nivel (interpretacao).
-"""
+"""Nucleo do pipeline: FrameContext, Stage e Pipeline."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -87,7 +79,7 @@ class Stage:
         self.cfg, self.env = cfg, env
 
     def fit(self, samples: list):
-        """Opcional: aprende algo da sequencia a partir de quadros de amostra ja processados."""
+        """Opcional: aprende algo da sequencia (fundo, area de referencia)."""
 
     def process(self, ctx: FrameContext):
         raise NotImplementedError
@@ -105,11 +97,7 @@ class Pipeline:
         return FrameContext(index=k, name=src.name(k), raw=src.frame(k), keep_artifacts=keep_artifacts)
 
     def fit(self, n_samples: int = 25):
-        """Passa quadros de amostra pelos estagios, chamando `fit` quando necessario.
-
-        As amostras avancam estagio a estagio: o `fit` de um estagio ve amostras ja processadas
-        por todos os anteriores (ex.: a area de referencia e medida sobre a mascara rotulada).
-        """
+        """Passa quadros de amostra pelos estagios e chama `fit` quando preciso."""
         fit_idx = [i for i, s in enumerate(self.stages) if s.needs_fit]
         if not fit_idx:
             return

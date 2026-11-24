@@ -1,10 +1,10 @@
-# Configuracao da parte 1 (PDI). Todos os campos tem valor padrao em celegans_seg/config.py;
-# edite aqui so o que quiser mudar. Citacoes [Aula NN, pag. P] = pagina do PDF em Estudos/PDI/Slides.
+# Configuracao do PDI (mesmos valores de celegans_seg/config.py). Origem e escolha de cada parametro: docs/ESTUDO_PDI.md.
+# [Aula NN, pag. P] = pagina do PDF da aula.
 
 input:
   # --- Opcao A: pasta com os quadros de UMA sequencia ---------------------------------
   images: ""          # ex.: D:/zenodo/csb-1_dataset/images/24_2_1_1
-  masks: ""           # opcional: D:/zenodo/csb-1_dataset/masks/24_2_1_1
+  masks: ""           # opcional (gabarito): D:/zenodo/csb-1_dataset/masks/24_2_1_1
   # --- Opcao B: raiz do dataset (images/<seq>, masks/<seq>) ---------------------------
   dataset_root: ""
   sequence: ""
@@ -15,21 +15,88 @@ input:
   step: 1
   worms_dark: true               # campo claro (verme escuro). false para fluorescencia
 
-normalize:   {gamma: 1.0, autocontrast: false}
-denoise:     {method: gaussian, sigma: 1.0}       # gaussian | median | bilateral | none
-background:  {method: median, n_samples: 25, percentile: 70}   # median | tophat | none. percentile 50 = mediana pura; 70 evita absorver verme parado (ver docs/EXPERIMENTOS.md)
-threshold:   {method: otsu, gain: 4.0, min_threshold: 40, grow_dist: 15, grow_thr: 1.0, grow_open: 3, spatial_min_area: 300}   # method: otsu | adaptive. grow_dist: completa o verme (cauda) com o top-hat ate N px da mascara (0 = desliga). spatial_min_area: verme parado (sem sinal temporal) entra pelo top-hat se o componente tiver esta area (0 = desliga)
-morphology:  {opening_radius: 1, closing_radius: 1, fill_holes: true}
-labeling:    {min_area: 150, bridge_gap: 8, bridge_min_area: 150}   # min_area: 80 no sintetico, 150 no CSB-1 (912x736). bridge_gap: liga pedacos de verme partido (0 = desliga)
-analysis:    {cluster_ratio: 1.5, ref_area: 0.0}  # ref_area 0 = estimada dos dados
-refine:      {kind: none}   # none = so PDI (padrao). cnn = gancho para a CNN do colega (celegans_seg/cnn.py; hoje levanta NotImplementedError)
-export:      {patch_size: 192, only_clusters: true}   # 192: cabem os amontoados grandes (128 deixava ~19 % de fora); a CNN usa o mesmo tamanho
-timeline:    {window: 128, max_dist: 60, min_ssim: 0.35, dist_weight: 0.3, max_gap: 2, min_track_len: 3}  # linha do tempo de cada verme: liga mascaras de quadros vizinhos por SSIM (Aula 05, pag. 18-22)
+# 1) Normalize: sem parametros (so escala para [0,1]; gamma/autocontraste da Aula 03 foram testados e nao entram)
+
+# 2) Denoise: passa-baixas gaussiano [Aula 04, pag. 16-19]
+denoise:
+  sigma: 1.0
+
+# 3) Background: fundo temporal  + top-hat [Aula 08, pag. 62-71]
+background:
+  n_samples: 25         # quadros usados para estimar o fundo
+  percentile: 70        # 50 = mediana pura; 70 evita absorver verme parado (docs/EXPERIMENTOS.md)
+  tophat_size: 31       # lado (px) do SE do top-hat; maior que a largura do verme
+
+# 4) Threshold: Otsu [Aula 08, pag. 10-13] + completar o verme com o top-hat 
+threshold:
+  gain: 4.0             # ganho de contraste antes do Otsu
+  min_threshold: 40     # piso do limiar (0-255); sem ele, quadro sem verme limiariza ruido
+  grow_dist: 15         #  completa a cauda ate N px da mascara (0 = desliga)
+  grow_seed_area: 150   # area minima (px) do componente que serve de semente
+  grow_open: 3          # raio da abertura do trecho acrescentado [Aula 08, pag. 24-25]
+  grow_thr: 1.0         # limiar do top-hat = grow_thr x limiar de Otsu
+  spatial_min_area: 300 #  verme parado entra pelo top-hat se o componente tiver esta area (0 = desliga)
+
+# 5) Morphology: abertura -> fechamento -> preenche buracos [Aula 08, pag. 19-35]
+morphology:
+  opening_radius: 1     # raio do disco (SE) da abertura
+  closing_radius: 1     # raio do disco (SE) do fechamento
+  fill_holes: true      
+
+# 6) Labeling: componentes conexos, vizinhanca-8 [Aula 08, pag. 50-60; Aula 01c, pag. 9]
+labeling:
+  min_area: 150         # area minima (px); 150 no CSB-1 (912x736), 80 no sintetico
+  bridge_gap: 8         #  liga pedacos de verme partido a ate N px (0 = desliga)
+  bridge_min_area: 150  # so liga pedacos com esta area
+
+# 7) Analysis: esqueleto e distancia [Aula 08, pag. 37-48; Aula 01c, pag. 11] + deteccao de amontoado 
+analysis:
+  cluster_ratio: 1.5    # amontoado = area >= 1,5 x a de um verme
+  ref_area: 0.0         # 0 = estimada pela mediana das areas nos quadros de amostra
+  min_mean_width: 5.0   # mais fino (px) = sujeira do agar
+  max_mean_width: 40.0  # mais largo (px) = mancha
+  fallback_ref_area: 400.0  # area de referencia (px) se nenhum quadro de amostra tiver componente
+
+# 8) Refine: none = so PDI | cnn = a CNN separa os amontoados (celegans_seg/cnn.py; nao mexe em cnn/)
+refine:
+  kind: none
+  weights: runs/cnn_train/checkpoint.pth  # checkpoint da Mask R-CNN (ex.: runs/cnn_cluster/checkpoint.pth, ajustada nos amontoados)
+  score_thr: 0.3        # confianca minima da deteccao (o mesmo valor do run_model.py do colega)
+  threshold: 0.5        # limiar de pixel da mascara prevista
+  min_area: 20          # mascara com menos pixels que isso e descartada
+  window_margin: 16     # folga (px) em volta de um amontoado grande ao escolher a janela
+  max_window: 448       # maior janela (px); amontoado que precise de mais fica sem separar
+
+# 9) Timeline: liga as mascaras de quadros vizinhos por SSIM [Aula 05, pag. 17-22]
+timeline:
+  window: 128           # lado (px) do recorte em que o SSIM e calculado
+  max_dist: 60          # distancia maxima (px) entre centroides de quadros vizinhos
+  min_ssim: 0.35        # SSIM minimo para ligar duas mascaras
+  dist_weight: 0.3      # peso da distancia no custo da ligacao
+  max_gap: 2            # quadros seguidos que o verme pode sumir sem perder o id
+  min_track_len: 3      # trilhas menores que isso nao entram na figura
+  blur_sigma: 1.0       # suavizacao gaussiana das mascaras antes do SSIM [Aula 04, pag. 16-19]
+  roi_margin: 4         # folga (px) em volta das mascaras onde o SSIM e medido (o fundo vazio daria 1)
+  ssim_sigma: 1.5       # [Aula 05, pag. 19-22]
+
+# 10) Evaluate: so avaliacao/relatorio, nao muda a segmentacao
+evaluate:
+  iou_match: 0.5        # IoU minimo para um verme previsto contar como acerto
+  no_gt_fraction: 0.3   # componente com menos desta fracao sobre o gabarito = "sem verme"
+  border_margin: 2      # px da borda; componente sem gabarito que toca = verme cortado (o CSB-1 nao anota)
+  worm_area_ratio: [0.7, 1.4]    # forma tipica de verme (area / area de referencia)
+  worm_mean_width: [6.5, 10.5]   # px (area / comprimento do esqueleto)
+  worm_min_contrast: 0.2         # sinal espacial (top-hat) medio
+  small_min_area: 150            # "verme pequeno", area minima (px)
+  small_min_contrast: 0.1        # "verme pequeno", contraste minimo
+
+export:
+  patch_size: 192
+  only_clusters: true
 
 output:
   dir: runs/last
 
-# Ordem dos estagios. So PDI por padrao: sem "export" (que grava os recortes e cluster_masks/ para a CNN).
-# Para a CNN: acrescente "export" aqui (ou use tools/build_cnn_dataset.py) e use refine.kind=cnn.
+# Ordem dos estagios. Sem "export" (que grava os recortes para treinar a CNN; use tools/build_cnn_dataset.py).
 stages: [normalize, denoise, background, threshold, morphology, labeling,
          analysis, instances, refine, timeline, evaluate, visualize]

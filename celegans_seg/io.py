@@ -1,9 +1,4 @@
-"""Entrada de dados. Para trocar a entrada basta apontar outra pasta (ou criar outra FrameSource).
-
-- `FrameSource`: contrato (len, frame(i) -> uint8 cinza, name(i)).
-- `ImageFolderSource`: quadros numa pasta (png/tif/jpg), em ordem natural (2.png antes de 10.png).
-- `MaskSource`: mascaras de gabarito, uma por verme (formato do dataset Zenodo 7456803 / CSB-1).
-"""
+"""Entrada de dados: quadros de uma pasta e mascaras do gabarito."""
 from __future__ import annotations
 
 import glob
@@ -20,11 +15,7 @@ def _natural_key(path: str):
 
 
 def to_gray_u8(arr: np.ndarray) -> np.ndarray:
-    """Qualquer imagem -> cinza uint8.
-
-    RGB -> cinza com gray = 0.299 R + 0.587 G + 0.114 B [Aula 10, pag. 2] (mesma formula do PIL 'L').
-    16 bits -> reduz para 8 bits.
-    """
+    """Qualquer imagem -> cinza uint8 (0,299 R + 0,587 G + 0,114 B) [Aula 10, pag. 2]."""
     if arr.dtype == np.uint16:
         arr = (arr >> 8).astype(np.uint8)
     if arr.ndim == 3:

@@ -34,8 +34,10 @@ from scipy import ndimage as ndi
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from celegans_seg import build_pipeline, load_config  # noqa: E402
-from celegans_seg.stages.evaluate import (SMALL_WORM_MIN_AREA, SMALL_WORM_MIN_CONTRAST, classify_no_gt,  # noqa: E402
-                                          gt_fraction)
+from celegans_seg.config import EvaluateCfg  # noqa: E402
+from celegans_seg.stages.evaluate import classify_no_gt, gt_fraction  # noqa: E402
+
+SMALL_WORM_MIN_AREA, SMALL_WORM_MIN_CONTRAST = EvaluateCfg().small_min_area, EvaluateCfg().small_min_contrast
 
 STAGES = ["normalize", "denoise", "background", "threshold", "morphology", "labeling", "analysis"]
 MIN_GT_AREA = 30  # mascaras de gabarito menores que isso sao ignoradas

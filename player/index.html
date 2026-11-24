@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Acompanhar verme</title>
+<title>Player de vermes</title>
 <style>
   :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2230; --mut:#667085; --line:#e3e6ec; --acc:#2563eb; }
   @media (prefers-color-scheme: dark) { :root { --bg:#12151c; --card:#1b2029; --ink:#e8ebf2; --mut:#98a2b3; --line:#2a3140; --acc:#6ea0ff; } }
@@ -37,11 +37,21 @@
   
   .legend { display:flex; gap:12px; flex-wrap:wrap; color:var(--mut); font-size:12px; margin-top:8px; line-height:1.4; }
   .ausente { color:#b42318; }
+  .stage { min-height:120px; }
+  #bar { height:6px; border-radius:3px; background:var(--line); overflow:hidden; margin:-4px 0 10px; display:none; }
+  #bar > div { height:100%; width:0; background:var(--acc); transition:width .2s; }
 </style>
 </head>
 <body>
 <main>
   <section class="card">
+    <div class="ctrl" style="margin:0 0 10px">
+      <label>Vídeo: <select id="video"></select></label>
+      <label id="cnnLabel">Separar amontoados com: <select id="cnn"></select></label>
+      <button id="open">Abrir</button>
+    </div>
+    <div class="hint" id="status" style="margin:-4px 0 6px"></div>
+    <div id="bar"><div></div></div>
     <div class="stage"><canvas id="view"></canvas></div>
     <div class="ctrl">
       <button id="play">▶ Reproduzir</button>
@@ -53,6 +63,8 @@
     <div class="ctrl">
       <label>Verme: <select id="pick"></select></label>
       <button id="clear">Limpar seleção</button>
+      <label>Etapa: <select id="stage"></select></label>
+      <label><input type="checkbox" id="masks" checked> máscaras</label>
       <label><input type="checkbox" id="others" checked> outros vermes</label>
       <label><input type="checkbox" id="follow"> seguir o verme</label>
       <label>vel. <select id="speed"><option value="200">lenta</option><option value="100" selected>normal</option><option value="40">rápida</option></select></label>
@@ -70,17 +82,29 @@
     <section class="card"><h2>Imagem atual</h2><div id="frame"></div></section>
   </aside>
 </main>
-<script src="data.js"></script>
 <script>
-const F = DATA.frames, W = DATA.width, H = DATA.height;
 const $ = id => document.getElementById(id);
 const view = $("view"), ctx = view.getContext("2d");
-view.width = W; view.height = H;
-const layer = document.createElement("canvas"); layer.width = W; layer.height = H;
-document.title = "Acompanhar verme" + (DATA.refine === "cnn" ? " · " + DATA.weights : " · sem CNN");
-
+let DATA = null, F = [], W = 1, H = 1, BASE = "";
+const layer = document.createElement("canvas");
 let cur = 0, sel = null, timer = null;
-const imgs = {}, labs = {};
+let imgs = {}, labs = {}, layerKey = "", stage = "raw", STAGES = [];
+const V = { x: 0, y: 0, w: 1 };
+
+// Troca o video: zera selecao, zoom e caches.
+function useData(d, name) {
+  if (timer) play();
+  DATA = d; F = d.frames; W = d.width; H = d.height; BASE = "cache/" + name + "/";
+  view.width = layer.width = W; view.height = layer.height = H;
+  cur = 0; sel = null; imgs = {}; labs = {}; layerKey = "";
+  // nomes das etapas: os atuais (servidor, lidos de build.py) valem mais que os gravados no cache
+  const nomes = Object.fromEntries(((INFO && INFO.stages) || []).map(s => [s.id, s.label]));
+  STAGES = (d.stages || [{ id: "raw", label: "Original", ext: "jpg" }]).map(s => ({ ...s, label: nomes[s.id] || s.label })); stage = "raw";
+  $("stage").innerHTML = STAGES.map(s => `<option value="${s.id}">${s.label}</option>`).join("");
+  V.x = 0; V.y = 0; V.w = W;
+  document.title = "Player de vermes · " + (d.refine === "cnn" ? d.weights : "só PDI");
+  draw();
+}
 function colorOf(t) { // razão áurea, como no pipeline
   const h = (t * 0.61803398875) % 1, s = .85, v = 1, i = Math.floor(h * 6), f = h * 6 - i;
   const p = v * (1 - s), q = v * (1 - f * s), u = v * (1 - (1 - f) * s);
@@ -89,8 +113,10 @@ function colorOf(t) { // razão áurea, como no pipeline
 }
 function loadImg(src) { return new Promise(res => { const im = new Image(); im.onload = () => res(im); im.src = src; }); }
 async function frameData(k) {
-  if (!imgs[k]) imgs[k] = loadImg("frames/" + String(k).padStart(5, "0") + ".jpg");
-  if (!labs[k]) labs[k] = loadImg(F[k].label).then(im => {
+  const id = String(k).padStart(5, "0");
+  if (!imgs[k]) imgs[k] = loadImg(stage === "raw" ? BASE + "frames/" + id + ".jpg"
+    : BASE + "stages/" + stage + "/" + id + "." + STAGES.find(s => s.id === stage).ext);
+  if (!labs[k]) labs[k] = loadImg(BASE + "labels/" + id + ".png").then(im => {
     const c = document.createElement("canvas"); c.width = W; c.height = H;
     const x = c.getContext("2d"); x.drawImage(im, 0, 0); return x.getImageData(0, 0, W, H).data;
   });
@@ -100,7 +126,6 @@ const byTrack = k => Object.fromEntries(F[k].instances.map(i => [i.track, i]));
 const fmt = (v, d = 3) => v == null ? "–" : (typeof v === "number" ? (Number.isInteger(v) ? v : v.toFixed(d)) : v);
 
 // Zoom: V = janela visivel, em pixels do quadro (x, y, largura); a altura segue a proporcao do quadro.
-const V = { x: 0, y: 0, w: W };
 const vh = () => V.w * H / W;
 function clampV() {
   V.w = Math.max(48, Math.min(W, V.w));
@@ -117,9 +142,9 @@ function followWorm() {
   if (!i || !$("follow").checked) return;
   V.x = i.cx - V.w / 2; V.y = i.cy - vh() / 2; clampV();
 }
-let layerKey = "";
 let token = 0;
 async function draw() {
+  if (!DATA) return;
   const my = ++token, k = cur;
   const [im, lab] = await frameData(k);
   if (my !== token) return;
@@ -143,10 +168,10 @@ async function draw() {
   followWorm(); clampV();
   ctx.imageSmoothingEnabled = KK() < 3;  // muito aproximado: pixels nitidos
   ctx.drawImage(im, V.x, V.y, V.w, vh(), 0, 0, W, H);
-  ctx.drawImage(layer, V.x, V.y, V.w, vh(), 0, 0, W, H);
+  const showMasks = $("masks").checked;
+  if (showMasks) ctx.drawImage(layer, V.x, V.y, V.w, vh(), 0, 0, W, H);
   ctx.save(); ctx.setTransform(KK(), 0, 0, KK(), -V.x * KK(), -V.y * KK());  // dai em diante: coordenadas do quadro
-  groupBoxes(k);
-  if (sel != null) overlaySel(k);
+  if (showMasks) { groupBoxes(k); if (sel != null) overlaySel(k); }
   ctx.restore();
   panels();
 }
@@ -206,6 +231,7 @@ function wormPanel() {
 }
 // Linha do tempo do player: trecho amarelo = quadros em que o verme escolhido aparece; traco = quadro atual
 function drawTL() {
+  if (!DATA) return;
   const c = $("tl"), dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
   if (!w) return;
   c.width = w * dpr; c.height = h * dpr;
@@ -219,7 +245,7 @@ function drawTL() {
   }
   x.fillStyle = ink; x.fillRect(Math.min(w - 3, w * (cur + 0.5) / F.length - 1.5), 1, 3, h - 2);
 }
-function go(k) { cur = Math.max(0, Math.min(F.length - 1, k)); draw(); }
+function go(k) { if (!DATA) return; cur = Math.max(0, Math.min(F.length - 1, k)); draw(); }
 function setSel(t) { sel = t; draw(); }
 function toImg(e) {
   const r = view.getBoundingClientRect();
@@ -236,7 +262,7 @@ let drag = null;
 const box = document.createElement("div");  // retangulo do Shift + arrastar
 box.style.cssText = "position:fixed;border:2px solid #ffd400;background:rgba(255,212,0,.15);pointer-events:none;display:none;z-index:9";
 document.body.appendChild(box);
-view.addEventListener("pointerdown", e => { view.setPointerCapture(e.pointerId); drag = { sx: e.clientX, sy: e.clientY, x: V.x, y: V.y, moved: false, zoomBox: e.shiftKey }; });
+view.addEventListener("pointerdown", e => { try { view.setPointerCapture(e.pointerId); } catch (_) {} drag = { sx: e.clientX, sy: e.clientY, x: V.x, y: V.y, moved: false, zoomBox: e.shiftKey }; });
 view.addEventListener("pointermove", e => {
   if (!drag) return;
   const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
@@ -271,8 +297,11 @@ $("tl").addEventListener("pointermove", e => { if (scrub) seek(e); });
 $("tl").addEventListener("pointerup", () => { scrub = false; });
 $("prev").onclick = () => go(cur - 1); $("next").onclick = () => go(cur + 1);
 $("others").onchange = draw;
+$("masks").onchange = draw;
+$("stage").onchange = e => { stage = e.target.value; imgs = {}; draw(); };
 function play() {
   if (timer) { clearInterval(timer); timer = null; $("play").textContent = "▶ Reproduzir"; $("play").classList.remove("on"); return; }
+  if (!DATA) return;
   if (cur >= F.length - 1) go(0);  // no fim do video, reproduzir recomeca
   $("play").textContent = "⏸ Pausar"; $("play").classList.add("on");
   const step = () => { if (cur >= F.length - 1) return play(); go(cur + 1); };
@@ -281,11 +310,82 @@ function play() {
 $("speed").onchange = () => { if (timer) { play(); play(); } };
 $("play").onclick = play;
 addEventListener("keydown", e => {
-  if (e.target.tagName === "SELECT") return;
+  if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
   if (e.key === "ArrowRight") go(cur + 1); else if (e.key === "ArrowLeft") go(cur - 1); else if (e.key === " ") { e.preventDefault(); play(); }
 });
 addEventListener("resize", drawTL);
-draw();
+
+// ---- escolha do video e da rede (as opcoes vem do servidor: player/catalog.py)
+let INFO = null, jobToken = 0;
+const api = (path, body) => fetch("/api/" + path, body ? { method: "POST", body: JSON.stringify(body) } : {}).then(r => r.json());
+const status = t => { $("status").textContent = t; };
+const readyName = (v, m) => INFO.ready[v + "|" + m];
+
+function fillVideos() {
+  $("video").innerHTML = INFO.videos.map(v => `<option value="${v.id}">${v.label} (${v.frames} quadros)</option>`).join("");
+}
+function fillModels(keep) {  // cada rede mostra se ja esta pronta para o video escolhido
+  const v = INFO.videos.find(x => x.id === $("video").value);
+  $("cnn").innerHTML = INFO.models.map(m => {
+    const eta = Math.max(1, Math.round(v.frames * 1.3 / 60));
+    return `<option value="${m.id}">${m.label} · ${readyName(v.id, m.id) ? "pronto" : "processar (~" + eta + " min)"}</option>`;
+  }).join("");
+  if (keep) $("cnn").value = keep;
+}
+async function openDone(name) {
+  const d = await fetch("cache/" + name + "/data.json", { cache: "no-store" }).then(x => x.json());
+  useData(d, name);
+  status(d.frames.length + " quadros · " + (d.refine === "cnn" ? "CNN: " + d.weights : "só PDI") + (d.has_gt ? " · com gabarito" : ""));
+}
+async function openChoice() {  // abre se ja esta pronto; senao processa (leva alguns minutos) e abre
+  const v = $("video").value, m = $("cnn").value, mine = ++jobToken;
+  const name = readyName(v, m);
+  if (name) return openDone(name);
+  status("Enviando o pedido ao servidor…"); $("bar").style.display = "block"; $("bar").firstChild.style.width = "2%";
+  $("open").disabled = true; $("open").textContent = "Processando…";
+  const t0 = Date.now(), fim = () => { $("bar").style.display = "none"; $("open").disabled = false; $("open").textContent = "Abrir"; };
+  try {
+    const r = await api("process", { video: v, model: m });
+    if (r.error) { status("Erro: " + r.error); return fim(); }
+    for (;;) {
+      const j = await api("job?name=" + encodeURIComponent(r.name));
+      if (mine !== jobToken) return fim();  // escolheu outra opcao enquanto isso (o processamento continua no servidor)
+      if (j.state === "error") { status("Erro: " + j.error); break; }
+      if (j.state === "done") { INFO = await api("info"); fillModels(m); await openDone(r.name); break; }
+      const s = Math.round((Date.now() - t0) / 1000);
+      if (j.done === 0) status("Estimando o fundo do vídeo (os primeiros ~20 s)… " + s + " s");
+      else {
+        const falta = Math.round((Date.now() - t0) / j.done * (j.total - j.done) / 60000);
+        status("Processando " + j.done + " / " + j.total + " quadros · faltam ~" + Math.max(falta, 1) + " min (fica salvo: da próxima vez abre na hora)");
+      }
+      $("bar").firstChild.style.width = Math.max(2, 100 * j.done / Math.max(j.total, 1)) + "%";
+      await new Promise(res => setTimeout(res, 700));
+    }
+  } catch (e) { status("Erro: " + e); }
+  fim();
+}
+function choiceChanged() {
+  jobToken++; $("bar").style.display = "none";
+  fillModels($("cnn").value);
+  if (readyName($("video").value, $("cnn").value)) openChoice();
+  else status("Esta opção ainda não foi processada. Clique em Abrir para processar (ou rode python player/prepare.py).");
+}
+$("video").onchange = choiceChanged;
+$("cnn").onchange = choiceChanged;
+$("open").onclick = openChoice;
+
+if (location.protocol === "file:") {  // aberto com duplo clique: sem servidor nao ha dados nem processamento
+  status("Este arquivo foi aberto direto do disco. Rode `python player/server.py` e use o endereço http://127.0.0.1:8765.");
+  for (const id of ["video", "cnn", "open"]) $(id).disabled = true;
+} else {
+  api("info").then(info => {
+    INFO = info; fillVideos();
+    $("cnnLabel").style.display = INFO.models.length > 1 ? "" : "none";  // com uma so rede, nao ha o que escolher
+    const first = Object.keys(INFO.ready)[0];  // abre uma opcao ja pronta, se houver
+    if (first) { const [v, m] = first.split("|"); $("video").value = v; fillModels(m); openChoice(); }
+    else { fillModels(); status("Escolha o vídeo e a rede e clique em Abrir (a primeira vez processa o vídeo)."); }
+  }).catch(() => status("Não consegui falar com o servidor. Ele ainda está rodando (python player/server.py)?"));
+}
 </script>
 </body>
 </html>

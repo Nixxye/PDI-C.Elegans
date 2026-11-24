@@ -1,8 +1,4 @@
-"""PARTE 1 / Etapa D - Instancias: transforma cada componente em uma instancia.
-
-Verme isolado -> `source="single"`. Amontoado -> UMA instancia `source="cluster"` (so a mascara "aqui ha varios
-vermes"); quem o separa em vermes e a CNN (stages/refine.py, a cargo do colega).
-"""
+"""Cada componente vira uma instancia (single ou cluster)."""
 from __future__ import annotations
 
 import numpy as np

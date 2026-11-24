@@ -2,3 +2,6 @@ runs/
 __pycache__/
 data/
 *.pyc
+
+# player: videos processados (gerados)
+player/cache/

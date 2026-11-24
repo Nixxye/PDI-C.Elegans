@@ -1,65 +1,17 @@
-"""Operacoes de PDI de baixo nivel, implementadas a mao (NumPy/SciPy) seguindo os slides.
-
-O objetivo e que cada funcao aponte para a aula de onde veio a ideia. Onde o SciPy ja traz a
-operacao (convolucao, morfologia binaria, transformada de distancia), usamos o SciPy para
-ficar rapido, e deixamos a versao "didatica" ao lado quando ela existe (rotulagem em duas passadas).
-"""
+"""Operacoes de PDI (NumPy/SciPy); cada funcao cita a aula."""
 from __future__ import annotations
 
 import numpy as np
 from scipy import ndimage as ndi
 
 # --------------------------------------------------------------------------------------
-# Transformacoes pontuais e histograma  (Aula 03)
-# --------------------------------------------------------------------------------------
-
-
-def gamma_correct(img: np.ndarray, gamma: float = 1.0, c: float = 1.0) -> np.ndarray:
-    """s = c * r^gamma, com r normalizado em [0,1].  [Aula 03, pag. 14]"""
-    return np.clip(c * np.power(np.clip(img, 0, 1), gamma), 0, 1).astype(np.float32)
-
-
-def autocontrast(img: np.ndarray, low: float = 0.01, high: float = 0.99) -> np.ndarray:
-    """Alargamento de contraste com saturacao nos percentis (stretchlim + imadjust).
-    [Aula 03, pag. 17 e 23-24]"""
-    lo, hi = np.quantile(img, [low, high])
-    if hi - lo < 1e-6:
-        return img
-    return np.clip((img - lo) / (hi - lo), 0, 1).astype(np.float32)
-
-
-# --------------------------------------------------------------------------------------
-# Filtros de vizinhanca  (Aulas 04 e 05)
+# Filtro de vizinhanca  (Aula 04)
 # --------------------------------------------------------------------------------------
 
 
 def gaussian(img: np.ndarray, sigma: float) -> np.ndarray:
-    """Passa-baixas gaussiano h = exp(-(x^2+y^2)/2s^2)/(2 pi s^2), normalizado; lado do kernel
-    2*ceil(3 sigma)+1 (truncate=3).  [Aula 04, pag. 13-20]"""
+    """Passa-baixas gaussiano [Aula 04, pag. 16-19]."""
     return ndi.gaussian_filter(img, sigma, truncate=3.0)
-
-
-def median(img: np.ndarray, size: int = 3) -> np.ndarray:
-    """Filtro de mediana (ruido sal-e-pimenta).  [Aula 04, pag. 27-28]"""
-    return ndi.median_filter(img, size=size)
-
-
-def bilateral(img: np.ndarray, sigma_s: float = 2.0, sigma_r: float = 0.1) -> np.ndarray:
-    """Filtro bilateral: peso = gaussiana espacial x gaussiana de intensidade; preserva bordas.
-    [Aula 05, pag. 7-15].  Implementacao por deslocamentos (lenta, mas e a definicao)."""
-    r = int(np.ceil(3 * sigma_s))
-    h, w = img.shape
-    pad = np.pad(img, r, mode="reflect")
-    num = np.zeros_like(img, dtype=np.float32)
-    den = np.zeros_like(img, dtype=np.float32)
-    for dy in range(-r, r + 1):
-        for dx in range(-r, r + 1):
-            ws = np.exp(-(dx * dx + dy * dy) / (2 * sigma_s**2))
-            nb = pad[r + dy : r + dy + h, r + dx : r + dx + w]
-            wgt = ws * np.exp(-((nb - img) ** 2) / (2 * sigma_r**2))
-            num += wgt * nb
-            den += wgt
-    return (num / den).astype(np.float32)
 
 
 # --------------------------------------------------------------------------------------
@@ -68,8 +20,7 @@ def bilateral(img: np.ndarray, sigma_s: float = 2.0, sigma_r: float = 0.1) -> np
 
 
 def otsu_threshold(img_u8: np.ndarray) -> int:
-    """Otsu: o limiar que maximiza a variancia entre classes (equivalente a minimizar a
-    variancia dentro delas).  [Aula 08, pag. 10-13]"""
+    """Limiar de Otsu [Aula 08, pag. 10-13]."""
     hist = np.bincount(img_u8.ravel(), minlength=256).astype(np.float64)
     p = hist / hist.sum()
     w0 = np.cumsum(p)
@@ -78,17 +29,14 @@ def otsu_threshold(img_u8: np.ndarray) -> int:
     return int(np.argmax(sigma_b))
 
 
-def local_mean_threshold(img_u8: np.ndarray, window: int = 51, offset: int = 20) -> np.ndarray:
-    """Limiar adaptativo pela media local (como o 'adaptthresh' padrao do MATLAB).
-    [Aula 08, pag. 14-15].  Aqui o objeto e CLARO no sinal, entao T = media_local + offset."""
-    t = ndi.uniform_filter(img_u8.astype(np.float32), size=window)
-    return img_u8.astype(np.float32) > (t + offset)
+def tophat(img: np.ndarray, size: int = 31) -> np.ndarray:
+    """Top-hat: G - abertura(G) [Aula 08, pag. 66]. SE quadrado."""
+    return img - ndi.grey_opening(img, size=(size, size))
 
 
 def black_tophat(img: np.ndarray, size: int = 31) -> np.ndarray:
-    """Top-hat 'preto' = fechamento - imagem: realca objetos ESCUROS menores que o elemento
-    estruturante e uniformiza o fundo.  [Aula 08, pag. 62-71]  (SE quadrado, por velocidade)."""
-    return ndi.grey_closing(img, size=(size, size)) - img
+    """Top-hat para objeto escuro (imagem invertida) [Aula 08, pag. 62-71]."""
+    return tophat(1.0 - img, size)
 
 
 # --------------------------------------------------------------------------------------
@@ -103,14 +51,12 @@ def disk(radius: int) -> np.ndarray:
 
 
 def opening(mask: np.ndarray, radius: int) -> np.ndarray:
-    """Abertura (erosao seguida de dilatacao): limpa sem crescer os objetos.
-    [Aula 08, pag. 24-25]"""
+    """Abertura [Aula 08, pag. 24-25]."""
     return mask if radius <= 0 else ndi.binary_opening(mask, structure=disk(radius))
 
 
 def closing(mask: np.ndarray, radius: int) -> np.ndarray:
-    """Fechamento (dilatacao seguida de erosao): preenche buracos sem reduzir os objetos.
-    [Aula 08, pag. 26-27]"""
+    """Fechamento [Aula 08, pag. 26-27]."""
     return mask if radius <= 0 else ndi.binary_closing(mask, structure=disk(radius))
 
 
@@ -128,9 +74,7 @@ def label_components(mask: np.ndarray) -> tuple[np.ndarray, int]:
 
 
 def two_pass_labeling(mask: np.ndarray) -> tuple[np.ndarray, int]:
-    """Versao didatica da rotulagem em DUAS PASSADAS com union-find, como nos slides:
-    1a passada propaga o menor rotulo e registra colisoes; 2a resolve (find) os rotulos.
-    [Aula 08, pag. 56-60].  Lenta (Python puro): usada nos testes para validar `label_components`."""
+    """Rotulagem em duas passadas, union-find [Aula 08, pag. 56-60]. Usada nos testes."""
     h, w = mask.shape
     lab = np.zeros((h, w), dtype=np.int32)
     parent = [0]
@@ -169,14 +113,7 @@ def two_pass_labeling(mask: np.ndarray) -> tuple[np.ndarray, int]:
 
 
 def bridge_components(lab: np.ndarray, n: int, gap: int, min_area: int) -> np.ndarray:
-    """Liga com um traco reto os pares de componentes GRANDES separados por no maximo `gap` px.
-
-    Um verme com o meio claro (ou parado) sai em dois pedacos; cada pedaco e grande (>= min_area),
-    ao contrario da sujeira do agar, que e pequena. Ligar so componentes grandes evita unir
-    ruido (o que o fechamento em tons de cinza faz). Dois vermes distintos proximos tambem sao
-    ligados, mas isso e aceitavel: viram um amontoado, que vai para a CNN.
-    Nao esta nos slides (usa a transformada de distancia, Aula 01c, pag. 11).
-    """
+    """Liga componentes grandes separados por ate `gap` px."""
     if n < 2 or gap <= 0:
         return lab > 0
     out = lab > 0
@@ -216,8 +153,7 @@ def remove_small(lab: np.ndarray, n: int, min_area: int) -> tuple[np.ndarray, in
 
 
 def distance_transform(mask: np.ndarray) -> np.ndarray:
-    """Distancia euclidiana de cada pixel de objeto ao fundo mais proximo (como o 'bwdist' do
-    complemento).  [Aula 01c, pag. 11]"""
+    """Transformada de distancia [Aula 01c, pag. 11]."""
     return ndi.distance_transform_edt(mask).astype(np.float32)
 
 
@@ -227,9 +163,7 @@ def distance_transform(mask: np.ndarray) -> np.ndarray:
 
 
 def thin(mask: np.ndarray) -> np.ndarray:
-    """Esqueleto por AFINAMENTO (algoritmo de Zhang-Suen): remove pixels de borda iterativamente
-    preservando a conectividade, ao contrario das erosoes sucessivas que podem romper o objeto.
-    [Aula 08, pag. 37-48]  (equivalente ao bwmorph(A,'skel',Inf), pag. 45)."""
+    """Afinamento (Zhang-Suen) [Aula 08, pag. 37-48]."""
     img = np.pad(mask.astype(np.uint8), 1)
     changed = True
     while changed:
@@ -255,8 +189,7 @@ def thin(mask: np.ndarray) -> np.ndarray:
 
 
 def skeleton_stats(skel: np.ndarray) -> tuple[int, int, int]:
-    """(comprimento em pixels, numero de pontas, numero de juncoes) de um esqueleto.
-    Ponta = pixel com 1 vizinho; juncao = pixel com >= 3 vizinhos (vizinhanca-8)."""
+    """Comprimento, pontas e juncoes do esqueleto."""
     if not skel.any():
         return 0, 0, 0
     nb = ndi.convolve(skel.astype(np.int8), np.ones((3, 3), np.int8), mode="constant") - 1
@@ -265,27 +198,23 @@ def skeleton_stats(skel: np.ndarray) -> tuple[int, int, int]:
 
 
 # --------------------------------------------------------------------------------------
-# Similaridade entre imagens  (Aula 05, pag. 18-22)
+# Similaridade entre imagens  (Aula 05, pag. 17-22)
 # --------------------------------------------------------------------------------------
 
 
 def mse(a: np.ndarray, b: np.ndarray) -> float:
-    """Erro quadratico medio entre duas imagens de mesmo tamanho.  [Aula 05, pag. 18]"""
+    """Erro quadratico medio entre duas imagens de mesmo tamanho.  [Aula 05, pag. 17]"""
     return float(np.mean((a.astype(np.float64) - b.astype(np.float64)) ** 2))
 
 
 def psnr(a: np.ndarray, b: np.ndarray, peak: float = 1.0) -> float:
-    """PSNR = 10 log10(peak^2 / MSE), em dB (inf se as imagens forem iguais).  [Aula 05, pag. 19]"""
+    """PSNR = 10 log10(peak^2 / MSE), em dB (inf se as imagens forem iguais).  [Aula 05, pag. 18]"""
     e = mse(a, b)
     return float("inf") if e == 0 else float(10 * np.log10(peak**2 / e))
 
 
 def ssim(a: np.ndarray, b: np.ndarray, sigma: float = 1.5, roi: np.ndarray | None = None, peak: float = 1.0) -> float:
-    """SSIM medio (Wang et al.) entre duas imagens, janela gaussiana.  [Aula 05, pag. 20-22]
-
-    SSIM = (2 ma mb + C1)(2 cov + C2) / ((ma^2 + mb^2 + C1)(va + vb + C2)), com C1 = (0,01 L)^2 e C2 = (0,03 L)^2.
-    `roi` (bool) limita a media aos pixels de interesse: em mascaras o fundo vazio e identico nas duas e daria
-    SSIM = 1, escondendo a diferenca entre os vermes."""
+    """SSIM medio, janela gaussiana [Aula 05, pag. 19-22]; `roi` limita a media."""
     a, b = a.astype(np.float64), b.astype(np.float64)
     c1, c2 = (0.01 * peak) ** 2, (0.03 * peak) ** 2
     g = lambda x: ndi.gaussian_filter(x, sigma, truncate=3.5)  # noqa: E731

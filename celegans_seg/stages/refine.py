@@ -68,7 +68,7 @@ class CNNRefiner(Stage):
             # entao o verme continua com o tamanho que ela viu no treino)
             ys0, xs0 = np.nonzero(m_full)
             reach = max(cy - ys0.min(), ys0.max() - cy, cx - xs0.min(), xs0.max() - cx) + 1
-            W = max(S, 2 * int(reach) + 16)
+            W = max(S, 2 * int(reach) + self.cfg.refine.window_margin)
             if W > self.cfg.refine.max_window:
                 continue
             mask = crop_center(m_full, cy, cx, W)

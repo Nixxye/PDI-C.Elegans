@@ -1,22 +1,5 @@
-"""Linha do tempo de cada verme: liga as mascaras de quadros vizinhos pela SIMILARIDADE entre elas.
-
-Usa as medidas de comparacao de imagens da Aula 05 (pag. 18-22): SSIM (principal), MSE e PSNR. A ideia: o mesmo verme,
-em quadros seguidos, tem mascaras de forma parecida; vermes diferentes, nao.
-
-Para cada verme do quadro atual e cada trilha ativa (verme visto nos ultimos `max_gap`+1 quadros):
-  1. so compara se os centroides estao a ate `max_dist` px (x quadros de ausencia);
-  2. recorta uma janela `window` x `window` centrada no centroide de CADA mascara (alinha pela posicao, assim o verme
-     que andou continua comparavel) e calcula o SSIM entre as duas mascaras suavizadas, medido so em volta delas;
-  3. custo = -(SSIM - dist_weight * distancia / limite); a atribuicao otima (hungaro, como no pareamento por IoU)
-     liga cada verme a no maximo uma trilha, e so se SSIM >= `min_ssim`.
-Quem nao liga a ninguem abre uma trilha nova. Trilha que some por mais de `max_gap` quadros e encerrada.
-Um amontoado nao separado (`source="cluster"`) e uma instancia so: ele segura uma trilha, as outras ficam "ausentes"
-ate a CNN (ou o fim do contato) separar os vermes e elas serem religadas pelo SSIM.
-
-Saidas em `<out>/`: timeline.csv (uma linha por verme por quadro: trilha, posicao, area, SSIM/MSE/PSNR com o quadro
-anterior da trilha), tracks.csv (resumo por trilha) e timeline.png (cada trilha como uma barra ao longo dos quadros).
-`Instance.track` recebe o id da trilha (a visualizacao passa a colorir por trilha).
-"""
+"""Linha do tempo: liga mascaras de quadros vizinhos pelo SSIM [Aula 05, pag. 19-22].
+Saidas: timeline.csv, tracks.csv, timeline.png."""
 from __future__ import annotations
 
 import csv
@@ -40,19 +23,17 @@ class Timeline(Stage):
         self.rows = []
 
     def similarity(self, ma: np.ndarray, ca: tuple, mb: np.ndarray, cb: tuple) -> dict:
-        """SSIM/MSE/PSNR entre duas mascaras. Duas leituras do SSIM:
-        `ssim_forma`: cada mascara recortada ao redor do proprio centroide (compara a FORMA, mesmo que o verme tenha
-        andado); `ssim_pos`: as duas na mesma janela, sem alinhar (alto so se as mascaras se sobrepoem, que e o
-        que acontece quando o verme anda pouco entre quadros). `ssim` = a maior das duas."""
-        W = self.cfg.timeline.window
+        """SSIM/MSE/PSNR entre duas mascaras (forma e posicao)."""
+        t = self.cfg.timeline
+        W = t.window
         ia = tuple(int(round(v)) for v in ca)
         ib = tuple(int(round(v)) for v in cb)
         mid = ((ia[0] + ib[0]) // 2, (ia[1] + ib[1]) // 2)
-        blur = lambda x: ndi.gaussian_filter(x.astype(np.float32), 1.0)  # noqa: E731
+        blur = lambda x: ndi.gaussian_filter(x.astype(np.float32), t.blur_sigma)  # noqa: E731
         a, b = crop_center(ma, *ia, W), crop_center(mb, *ib, W)
         pa, pb = crop_center(ma, *mid, W), crop_center(mb, *mid, W)
-        shape = ops.ssim(blur(a), blur(b), roi=ndi.binary_dilation(a | b, iterations=4))
-        pos = ops.ssim(blur(pa), blur(pb), roi=ndi.binary_dilation(pa | pb, iterations=4))
+        shape = ops.ssim(blur(a), blur(b), t.ssim_sigma, ndi.binary_dilation(a | b, iterations=t.roi_margin))
+        pos = ops.ssim(blur(pa), blur(pb), t.ssim_sigma, ndi.binary_dilation(pa | pb, iterations=t.roi_margin))
         return dict(ssim=max(shape, pos), ssim_forma=shape, ssim_pos=pos, mse=ops.mse(pa, pb), psnr=ops.psnr(pa, pb))
 
     def process(self, ctx):

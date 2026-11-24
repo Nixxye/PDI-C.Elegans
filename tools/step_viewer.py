@@ -52,7 +52,7 @@ def no_gt_components(pipe, ctx):
     gabarito, separados por `evaluate.classify_no_gt`. So o primeiro grupo e falso positivo. Vazios se nao ha gabarito."""
     if pipe.env.masks is None or not ctx.components:
         return [], [], [], []
-    cat = classify_no_gt(ctx, pipe.env.masks.instances(ctx.name))
+    cat = classify_no_gt(ctx, pipe.env.masks.instances(ctx.name), pipe.env.cfg.evaluate)
     by = {k: [c for c in ctx.components if cat.get(c.id) == k] for k in ("fp", "borda", "verme", "pequeno")}
     return by["fp"], by["borda"], by["verme"], by["pequeno"]
 

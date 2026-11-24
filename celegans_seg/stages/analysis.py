@@ -1,8 +1,4 @@
-"""PARTE 1 / Etapa C - Analise dos componentes: quem e verme isolado e quem e amontoado.
-
-E o ponto de decisao do pipeline: componentes "normais" seguem direto; os "amontoados" sao
-virar instancias (instances.py) e, mais tarde, entregues a CNN (refine.py / export.py).
-"""
+"""Analise dos componentes: isolado ou amontoado."""
 from __future__ import annotations
 
 import numpy as np
@@ -13,17 +9,7 @@ from ..core import Component, Stage
 
 
 class ComponentAnalysis(Stage):
-    """Extrai atributos de cada componente e marca os amontoados.
-
-    Atributos (nivel "medio" da [Aula 06]): area, centroide, bounding box; esqueleto por
-    afinamento [Aula 08, pag. 37-48] -> comprimento, pontas e juncoes; espessura pela
-    transformada de distancia [Aula 01c, pag. 11].
-
-    Criterio de amontoado: area >= `cluster_ratio` x area de referencia de um verme (mediana das
-    areas dos componentes nos quadros de amostra). Limitacao: sobreposicao REDUZ a area visivel
-    (dois vermes cruzados em X somam menos que 2x), por isso `n_junctions` tambem e registrado,
-    para a CNN/heuristicas futuras.
-    """
+    """Atributos de cada componente; amontoado = area >= cluster_ratio x referencia."""
 
     name = "analysis"
     needs_fit = True
@@ -40,7 +26,7 @@ class ComponentAnalysis(Stage):
             n = int(s.labels.max())
             if n:
                 areas += list(np.bincount(s.labels.ravel(), minlength=n + 1)[1:])
-        self.ref_area = float(np.median(areas)) if areas else 400.0
+        self.ref_area = float(np.median(areas)) if areas else self.cfg.analysis.fallback_ref_area
         self.env.shared["ref_area"] = self.ref_area
 
     def process(self, ctx):
@@ -77,13 +63,7 @@ class ComponentAnalysis(Stage):
         ctx.metrics["n_clusters"] = len(cl_ids)
 
     def _drop_bad_shapes(self, ctx, comps):
-        """Descarta o que nao tem forma de verme: finos demais (sujeira do agar) ou largos demais (mancha, bolha).
-
-        Criterio: largura media = area / comprimento do esqueleto. Medido no CSB-1 (4.722 componentes, 7
-        sequencias): `< 5 px` ou `> 40 px` removeu 179 componentes sem verme no gabarito e nenhum com verme.
-        Vermes enrolados em bola tem largura media ate ~33 px, por isso o limite de cima e 40.
-        Os ids dos componentes que ficam sao renumerados de 1..n; o que saiu fica em `artifacts["rejected_mask"]`.
-        """
+        """Descarta componentes finos ou largos demais (largura media = area / esqueleto)."""
         a = self.cfg.analysis
         bad = {c.id for c in comps if (0 < a.min_mean_width > c.mean_width) or (0 < a.max_mean_width < c.mean_width)}
         ctx.metrics["n_rejected_shape"] = len(bad)
