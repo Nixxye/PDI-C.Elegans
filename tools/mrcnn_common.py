@@ -51,6 +51,15 @@ def rles(masks) -> list:
     return [rle(m) for m in masks]
 
 
+def dedup_gt(rles_list: list, thr: float = 0.5) -> list:
+    """Funde mascaras duplicadas do gabarito (IoU > thr no mesmo quadro): fica a maior. O CSB-1 anota alguns videos duas vezes."""
+    keep = []
+    for r in sorted(rles_list, key=lambda r: -float(mu.area(r))):
+        if not keep or mu.iou(keep, [r], [0]).max() <= thr:
+            keep.append(r)
+    return keep
+
+
 def union_mask(masks, shape) -> np.ndarray:
     u = np.zeros(shape, bool)
     for m in masks:

@@ -93,7 +93,60 @@ No relatório completo (10 sequências), sem × com o filtro: vermes encontrados
 
 O código da CNN (U-Net com 6 canais de saída, existência por canal, treino com amontoados sintéticos, experimento com o quadro anterior) foi tirado do repositório. O que ficou é o esqueleto `celegans_seg/cnn.py` (ver README). O histórico completo está no git (commits `6d7095e` e `3ecc77f`). Resultados daquela versão, só como referência: F1 por verme nos 574 amontoados do teste 0,93 (watershed 0,69); o que mais ajudou foi colar vermes de outros recortes para fabricar amontoados grandes no treino; informação do quadro anterior deu ganho desprezível (+0,013 de F1 no limite superior).
 
-## 3. O que não foi feito ou investigado
+## 3. Linha do tempo e filtro de Kalman (`stages/timeline.py`)
+
+> O código do Kalman (`celegans_seg/kalman.py`, opção `timeline.kalman`) **não está neste commit**: foi revertido a pedido e ficou guardado em `git stash` ("backup antes de voltar ao ultimo commit"). Os resultados abaixo foram mantidos.
+
+Liga as máscaras de quadros vizinhos pelo SSIM [Aula 05, pág. 19-22] (forma e sobreposição), com atribuição húngara e tolerância de 2 quadros sem aparecer. Medida contra o gabarito nos 120 primeiros quadros da 24_2_1_1 (`tools/timeline_eval.py`; trocas de ID = vezes em que o mesmo verme do gabarito muda de ID):
+
+| versão | F1@0,5 | trocas de ID | fragmentações |
+|---|---|---|---|
+| CNN no quadro inteiro + rastreador por IoU | 0,972 | 5 | 17 |
+| PDI + linha do tempo SSIM | 0,772 | 6 | 10 |
+| PDI + CNN + linha do tempo SSIM | 0,921 | **5** | **10** |
+| PDI + CNN + linha do tempo SSIM + Kalman | 0,921 | 22 | 10 |
+
+A linha "PDI + CNN" melhorou em relação a uma medida anterior (21 trocas, F1 0,906) porque a CNN passou a separar também os amontoados grandes (janela maior). Só com o SSIM de forma (cada máscara recortada no próprio centroide) eram 119 trocas; somar o SSIM de posição levou a 21 e depois a 5.
+
+**Filtro de Kalman** (`celegans_seg/kalman.py`, `timeline.kalman`, desligado por padrão). Velocidade constante em (y, x); a previsão substitui a última posição no limite de distância e no custo, e desloca a máscara anterior antes do SSIM de posição; limite de Mahalanobis. Escolha dos parâmetros na sequência de validação `24_0_0_1` (grade q ∈ {0,5; 1; 2}, r ∈ {2; 4}): ficou em q = 1, r = 4. **Resultado: não ajudou.**
+
+| sequência | sem Kalman | com Kalman (q, r testados) |
+|---|---|---|
+| `24_0_0_1` (validação, 120 quadros) | 0 trocas | 4 a 7 |
+| `24_2_1_1` (teste, 120 quadros) | 5 trocas | 18 a 28 |
+
+Diagnóstico na sequência de teste: tirar o limite de Mahalanobis não muda (22 trocas), e quanto **mais** o filtro confia na velocidade (q menor), pior (q = 0,2 e r = 1: 25 trocas; q = 5 e r = 10: 18). Ou seja, o movimento do verme **não é bem previsto por velocidade constante** (ele se contorce e muda de direção), e a posição prevista atrapalha mais do que a última posição conhecida. Não testei outros modelos (aceleração, estado com área e orientação, filtro estendido) nem o Kalman só para suavizar o centroide. A sequência de validação quase não tem amontoados (0 trocas sem Kalman), então ela quase não testa o caso em que o Kalman deveria ajudar.
+
+**De onde vêm as trocas de ID** (PDI + CNN, `24_2_1_1`, 120 quadros, 5 trocas; instâncias capturadas e o rastreador reexecutado offline). Em 4 das 5 o ID **não foi perdido na ligação**: a máscara do verme ficou ruim por 3 a 20 quadros (IoU < 0,5 com o gabarito) e, quando voltou ao normal, a trilha já tinha sido encerrada ou a nova máscara parecia diferente demais (SSIM abaixo de 0,35).
+
+| causa | eventos | o que se vê |
+|---|---|---|
+| máscara parcial por 3-4 quadros (área 350-490 px, contra 640 no gabarito) | 2 | a trilha continua com o mesmo ID, mas a máscara completa que volta não casa com a parcial guardada |
+| dois vermes fundidos em uma máscara só (área ≈ 1.700 px, ~2,5 vermes) por 8 quadros, não separada pela CNN | 2 | a máscara leva um só ID; o outro verme perde a trilha e ganha ID novo na separação |
+| máscara errada por 20 quadros (outra máscara ocupa o lugar) | 1 | trilha encerrada pelo limite de falhas |
+
+Testes offline (trocas nas sequências de teste / validação): parâmetros (`min_ssim`, `max_gap`, `max_dist`, `dist_weight`) variam entre 4 e 6 trocas na de teste, ou seja, **ruído**; `min_ssim` 0,5 ou `max_gap` 30 pioram (10 e 8). Uma segunda passada por distância para quem sobra deu 4 (uma troca a menos, dentro do ruído). Uma memória de fusão simples (manter vivas as trilhas cobertas por uma máscara grande) piorou muito (14 a 59), então não foi adotada. **Conclusão:** o limite do rastreador é a qualidade das máscaras; trocar o algoritmo de ligação muda pouco. São 5 eventos em uma sequência, então os números pequenos não distinguem variantes.
+
+**Separação guiada pelas trilhas** (`timeline.split_by_tracks`, ligada; `split_ratio` 1,4, `split_cover` 0,3, `split_min_part` 40). Ataca a causa dos amontoados que a CNN deixou inteiros: quando uma máscara cobre 2 ou mais trilhas do quadro anterior e é ≥ 1,4 vez maior que a maior delas, cada pixel vai para a trilha de máscara anterior mais próxima (distância até a máscara, Aula 01c) e cada parte (≥ 40 px) vira um verme com o ID da sua trilha. PDI + CNN, 120 quadros:
+
+| sequência | sem | com |
+|---|---|---|
+| `24_2_1_1` (teste) | F1 0,921 · FN 47 · 5 trocas · 10 fragm. | F1 0,923 · FN 34 · **3 trocas** · **7 fragm.** |
+| `24_2_1_2` | F1 0,903 · FN 110 · 0 trocas · 32 fragm. | F1 0,909 · FN 77 · 0 trocas · 26 fragm. |
+| `24_0_0_1`, `24_1_1_1` | sem amontoados fundidos | idêntico |
+
+Razão 1,2 piora (F1 0,903 na 24_2_1_1); 1,4 a 1,7 dão resultados parecidos. A melhora é pequena e vem de poucos eventos, e nenhum parâmetro foi tirado de uma sequência separada do teste. A `24_1_1_1` aparecia com F1 0,686 e 966 vermes "não encontrados": **não era falha de detecção, e sim o gabarito**: 1.932 de 2.108 máscaras estão duplicadas (cada verme anotado duas vezes, IoU ≥ 0,5 entre elas no mesmo quadro). Fundindo as duplicadas (fica a maior) o gabarito cai a 1.142 vermes e o resultado vira F1 0,966, FN 0 (FP 80). O mesmo vale em menor grau para a `24_2_1_2` (76 duplicadas: F1 0,903 → 0,916, FN 110 → 34); `24_2_1_1` e `24_0_0_1` quase não têm. `tools/timeline_eval.py` agora funde as duplicadas por padrão (`--raw-gt` mantém cru; `mrcnn_common.dedup_gt`); `tools/pdi_report.py` já fazia isso. Os números das tabelas desta seção para a `24_2_1_1` não mudam; os da `24_2_1_2` acima estão com gabarito cru. Máscaras parciais (as outras 2 trocas) continuam sem solução.
+
+**O que ainda erra na `24_2_1_1`** (PDI + CNN + separação guiada, 120 quadros, gabarito sem duplicatas: FP 363, FN 34).
+- **FN (34):** nenhum verme sumiu por completo; todos são vermes achados com máscara que não bate (IoU < 0,5): 14 menores, 13 de forma diferente, 7 maiores. A maioria fica em um emaranhado de 3 vermes que se cruzam (quadros 63 a 87), onde o contorno do conjunto está certo e o que erra é o corte entre eles.
+- **FP (363):** 282 são vermes **na borda da imagem**, que o gabarito não anota (a mesma ressalva da seção 1); só 81 estão fora da borda. Descontando os da borda o F1 vai de 0,923 a **0,976**.
+- **Repartir cada emaranhado entre as trilhas do quadro anterior** (pixel → máscara anterior mais próxima), em vez de aceitar o corte da CNN: **piorou** (F1 0,920 e FN 48 quando o número de trilhas bate com o de máscaras; F1 0,838, FN 272 e 7 trocas quando basta cobrir 2 trilhas). O corte da CNN dentro do emaranhado é melhor que a posição do quadro anterior; não adotado.
+- **Completar máscaras parciais com a imagem** (quando a área cai abaixo de 0,8 da referência da trilha, a máscara cresce a partir da anterior, só perto dela e onde o sinal ≥ fração do sinal médio da máscara; limite de 1,25 da referência), PDI + CNN, 120 quadros: raio 3 px quase não cresce (447 → 448 px, referência 624), sem efeito no resultado; raio 8 ou 15 com sinal 0,3: F1 0,925, FN 31, mas 4 trocas e 8 fragmentações (contra 0,923, 34, 3 e 7). Diferença dentro do ruído, **código removido**. Não investiguei por que a máscara fica parcial (hipóteses: verme parado absorvido pelo fundo, cauda com pouco sinal).
+- **Usar o quadro seguinte (não causal)**, simulado offline sobre a saída do pipeline: por trilha, quadros cuja área foge ±25 % da mediana (janela de 15 quadros) e que ficam entre dois quadros bons de área parecida (falha de até L = 1, 3, 5 ou 10 quadros) têm a máscara refeita misturando a anterior e a seguinte, alinhadas pelo centroide interpolado. **Sem efeito**: 8 a 13 quadros ajustados na `24_2_1_1` e nenhum na `24_2_1_2`; F1 0,923, FN 34, 3 trocas e 7 fragmentações iguais ao causal. As falhas que sobram são longas (25 quadros seguidos no emaranhado) ou não mudam a área, então a interpolação entre vizinhos não as alcança. Não implementado no pipeline.
+- **Memória de amontoado** (`timeline.hide_merged`, ligada; `hide_cover` 0,3, `hide_near` 30 px, razão de área 0,5 a 1,8, até 300 quadros): a trilha que fica sem máscara própria dentro da máscara de outra (verme que entrou em um amontoado) fica **oculta**, guardando a última máscara e a área de referência (que não cresce com a área do amontoado). Quando uma máscara nova surge a até 30 px do amontoado, com área entre 0,5 e 1,8 da referência, ela volta com o **mesmo ID** (atribuição húngara entre máscaras novas e trilhas ocultas; custo = diferença de área + distância). Resultado (120 quadros, PDI + CNN, gabarito sem duplicatas): `24_2_1_1` de 3 para **2 trocas** (some a do verme que passou 26 quadros dentro de um emaranhado); `24_2_1_2`, `24_0_0_1` e `24_1_1_1` sem mudança (0 trocas). As 2 trocas que sobram são de máscara parcial, não de amontoado. Limites: um evento corrigido; se uma máscara nova de área parecida aparecer perto do amontoado por outro motivo, ela pode herdar o ID errado (não observado).
+- Conclusão da busca por melhorias temporais: depois da separação guiada e da memória de amontoado, mais nada ajudou. O que resta é o corte entre vermes dentro de emaranhados, que é a CNN (fora do que o PDI controla).
+
+## 4. O que não foi feito ou investigado
 
 - **Rastreamento.** Um rastreador simples (associação por algoritmo húngaro com predição de posição) foi implementado e **removido** por enquanto: gerava ≈ 60 IDs para ≈ 20 vermes (trilhas fragmentadas, trocas dentro de amontoados). Seguir cada verme no vídeo continua sendo o objetivo final.
 - Parâmetros em pixels (`min_area`, `tophat_size`) foram calibrados no CSB-1 (912×736); revise-os para outra resolução.

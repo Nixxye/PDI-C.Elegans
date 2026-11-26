@@ -15,8 +15,8 @@ import mrcnn_common as C  # noqa: E402
 from celegans_seg import build_pipeline, load_config  # noqa: E402
 
 
-def run(seq, limit, kind, weights, out):
-    ov = [f"input.dataset_root={C.DATASET}", f"input.sequence={seq}", f"refine.kind={kind}", f"output.dir={out}"]
+def run(seq, limit, kind, weights, out, extra=()):
+    ov = [*extra, f"input.dataset_root={C.DATASET}", f"input.sequence={seq}", f"refine.kind={kind}", f"output.dir={out}"]
     if weights:
         ov.append(f"refine.weights={weights}")
     if limit:
@@ -37,17 +37,24 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seq", default="24_2_1_1")
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--set", action="append", default=[], help="sobrescreve a config, ex.: timeline.complete_partial=true")
+    ap.add_argument("--only-cnn", action="store_true", help="nao roda a versao so PDI")
+    ap.add_argument("--raw-gt", action="store_true", help="nao funde mascaras duplicadas do gabarito")
     ap.add_argument("--weights", default="runs/cnn_cluster/checkpoint.pth")
     args = ap.parse_args()
     ks = C.frames_of(args.seq)[: args.limit]
     gt = [C.rles(C.load_gt(args.seq, k)) for k in ks]
+    if not args.raw_gt:
+        gt = [C.dedup_gt(g) for g in gt]
     rows = {}
     pkl = ROOT / "runs" / "mrcnn_compare" / f"base_{args.seq}.pkl"
     if pkl.exists():
         raw = pickle.load(open(pkl, "rb"))[: len(ks)]
         rows["CNN quadro inteiro + rastreador IoU"] = C.evaluate(C.run_tracker(raw), gt)
     for label, kind, w in (("PDI + linha do tempo SSIM", "none", None), ("PDI + CNN + linha do tempo SSIM", "cnn", args.weights)):
-        fr = run(args.seq, args.limit, kind, w, f"runs/timeline_eval/{kind}")
+        if args.only_cnn and kind == "none":
+            continue
+        fr = run(args.seq, args.limit, kind, w, f"runs/timeline_eval/{kind}", args.set)
         rows[label] = C.evaluate([fr.get(k, []) for k in ks], gt)
     L = ["| versao | F1@0,5 | FP | FN | trocas de ID | fragmentacoes |", "|---|---|---|---|---|---|"]
     for n, r in rows.items():

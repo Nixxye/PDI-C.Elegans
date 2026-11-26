@@ -56,7 +56,7 @@
     <div class="ctrl">
       <button id="play">▶ Reproduzir</button>
       <button id="prev">◀</button>
-      <canvas id="tl" title="Linha do tempo: o trecho amarelo mostra onde o verme escolhido aparece" style="flex:1;min-width:140px;height:30px;cursor:pointer;touch-action:none"></canvas>
+      <canvas id="tl" title="Linha do tempo: amarelo = verme escolhido isolado; laranja = dentro de um amontoado" style="flex:1;min-width:140px;height:30px;cursor:pointer;touch-action:none"></canvas>
       <button id="next">▶</button>
       <span id="fidx" style="min-width:90px;text-align:right"></span>
     </div>
@@ -71,6 +71,7 @@
     </div>
     <div class="legend">
       <span><span class="chip" style="background:#ffd400"></span>verme escolhido</span>
+      <span><span class="chip" style="background:#ff7a00"></span>na linha do tempo: o verme escolhido está em um amontoado</span>
       <span><span class="chip" style="background:#ff3b30"></span>amontoado que a CNN não separou</span>
       <span><span class="chip" style="border:2px dashed currentColor;background:none"></span>caixa tracejada = vermes separados pela CNN de um mesmo amontoado</span>
       <span><span class="chip" style="background:#34c759;opacity:.6"></span>outros vermes</span>
@@ -240,8 +241,12 @@ function drawTL() {
   const y0 = 7, bh = h - 14, fw = Math.max(w / F.length, 1);
   x.fillStyle = line; x.fillRect(0, y0, w, bh);
   if (sel != null) {
-    x.fillStyle = "#ffd400";
-    F.forEach((f, k) => { if (f.instances.some(i => i.track === sel)) x.fillRect(w * k / F.length, y0, fw, bh); });
+    F.forEach((f, k) => {
+      const i = f.instances.find(i => i.track === sel);
+      if (!i) return;
+      x.fillStyle = i.source === "single" ? "#ffd400" : "#ff7a00";  // laranja: parte de um amontoado (separado ou não pela CNN)
+      x.fillRect(w * k / F.length, y0, fw, bh);
+    });
   }
   x.fillStyle = ink; x.fillRect(Math.min(w - 3, w * (cur + 0.5) / F.length - 1.5), 1, 3, h - 2);
 }

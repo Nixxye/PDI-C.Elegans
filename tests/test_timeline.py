@@ -55,6 +55,39 @@ class TimelineTest(unittest.TestCase):
         self.assertEqual(ids[3], ids[4][:2])
         self.assertNotIn(ids[4][2], ids[0])
 
+    def test_separa_verme_fundido_pelas_trilhas(self):
+        cfg = load_config(None)
+        st = Timeline(cfg, Env(source=None, masks=None, cfg=cfg, out_dir=ROOT / "runs" / "_tl_test"))
+        a = frame(0, [(50, 100, True), (70, 100, True)])  # dois vermes lado a lado
+        st.process(a)
+        ids = [i.track for i in a.instances]
+        b = frame(1, [(60, 100, True)])  # uma mascara so cobrindo os dois (area dobrada)
+        b.inst_labels[:] = 0
+        b.inst_labels[46:74, 70:130] = 1
+        b.instances[0].area = int((b.inst_labels == 1).sum())
+        st.process(b)
+        self.assertEqual(sorted(i.track for i in b.instances), sorted(ids))
+
+    def _encontro(self, ocultar):
+        cfg = load_config(None)
+        cfg.timeline.hide_merged = ocultar
+        st = Timeline(cfg, Env(source=None, masks=None, cfg=cfg, out_dir=ROOT / "runs" / "_tl_test"))
+        a0 = frame(0, [(50, 100, True), (54, 100, True)])  # dois vermes quase sobrepostos
+        st.process(a0)
+        ids = [i.track for i in a0.instances]
+        for k in range(1, 6):  # 5 quadros: uma mascara so (mais que max_gap)
+            b = frame(k, [(52, 100, True)])
+            st.process(b)
+        c = frame(6, [(50, 100, True), (80, 100, True)])  # o amontoado se desfaz
+        st.process(c)
+        return ids, sorted(i.track for i in c.instances)
+
+    def test_verme_que_entra_no_amontoado_sai_com_o_mesmo_id(self):
+        ids, depois = self._encontro(True)
+        self.assertEqual(sorted(ids), depois)
+        _, sem = self._encontro(False)
+        self.assertNotEqual(sorted(ids), sem)
+
 
 if __name__ == "__main__":
     unittest.main()

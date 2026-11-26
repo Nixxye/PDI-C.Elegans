@@ -91,6 +91,16 @@ class TimelineCfg:
     roi_margin: int = 4
     ssim_sigma: float = 1.5  # [Aula 05, pag. 19-22]
     min_track_len: int = 3
+    split_by_tracks: bool = True
+    split_ratio: float = 1.4
+    split_cover: float = 0.3
+    split_min_part: int = 40
+    hide_merged: bool = True
+    hide_cover: float = 0.3
+    hide_near: float = 30.0
+    hide_min_ratio: float = 0.5
+    hide_max_ratio: float = 1.8
+    hide_max_frames: int = 300
 
 
 @dataclass
